@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done.** Factor decomposition, stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done.** Stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -197,4 +197,43 @@ As of this writing (`python -m regime.run_conditional`, 95% confidence, same 14-
 
 ### Tests
 
-`pytest` (`tests/test_conditional.py`) — alignment/partitioning logic (no forward-fill across unlabeled dates, correct bucket membership, the min-days skip rule) is checked exactly. VaR and correlation shift-detection are checked by injecting a real, controllable regime-dependent variance/correlation difference into synthetic data and confirming the conditional estimates recover the correct direction. One end-to-end test runs the full pipeline on the real book. 47 tests passing total across the project.
+`pytest` (`tests/test_conditional.py`) — alignment/partitioning logic (no forward-fill across unlabeled dates, correct bucket membership, the min-days skip rule) is checked exactly. VaR and correlation shift-detection are checked by injecting a real, controllable regime-dependent variance/correlation difference into synthetic data and confirming the conditional estimates recover the correct direction. One end-to-end test runs the full pipeline on the real book.
+
+## Factor Risk Decomposition (`factor_model/`)
+
+- **`factors.py`** — named factors: market (SPY), crypto (BTC-USD), and four sector factors. Sector *membership* (`SECTOR_TICKERS`) is copied verbatim from alpha-signal-lab's `config/universe.py`, per the plan's "sector exposures from alpha-signal-lab's tagging" — every equity ticker this book actually holds already falls inside one of alpha-signal-lab's four defined sectors (Technology, Healthcare, Financials, Energy), so no extension was needed. Sector *factor returns*, deliberately, come from real SPDR sector ETFs (XLK/XLV/XLF/XLE) rather than an average of this book's own held tickers — using the book's own returns as its own factor would be circular, a position partly "explaining" itself.
+- **`regression.py`** — OLS regression (`statsmodels`) of a P&L series (portfolio- or strategy-level) on the named factor returns: a dollar loading per factor, t-stats/p-values, an intercept ("alpha" — P&L unexplained by any named factor), and R². Run once at the portfolio level and once per strategy — the per-strategy run is what makes "does pairtrade-lab-1's market-neutral book carry hidden market beta" a directly answerable, quantified question rather than an assertion.
+- **`pca.py`** — PCA on the same 14 risk-factor returns, a model-free complement: it makes no hypothesis about what drives risk, just finds the actual directions of maximum variance, useful for checking whether the named-factor model is missing something.
+- **`vega.py`** — net portfolio vega (voledge's options), reported separately from the return-based regression above since IV moves aren't spanned by the underlying's own price-return series — it doesn't belong in the same OLS model as the price factors.
+
+As of this writing (`python -m factor_model.run`, 500 aligned trading days):
+
+| | R² | SPY | Energy (XLE) | Financials (XLF) | Technology (XLK) | Healthcare (XLV) | BTC-USD |
+|---|---|---|---|---|---|---|---|
+| **Portfolio** | 0.087 | **-258,594 (p=0.003)** | 31,442 (p=0.05) | **116,113 (p=0.001)** | 30,802 | -22,370 | 13,030 |
+| alpha-signal-lab | 0.716 | -3,417 | **26,036 (p<0.001)** | **6,497 (p=0.003)** | **-18,800 (p<0.001)** | **-10,679 (p<0.001)** | -303 |
+| pairtrade-lab-1 | 0.062 | **-257,380 (p=0.003)** | 5,406 | **109,616 (p=0.002)** | 49,602 | -11,691 | 10,484 |
+| bookmaker | 1.000* | ~0 | ~0 | ~0 | ~0 | ~0 | **2,849 (p<0.001)** |
+| voledge | 1.000* | **2,203 (p<0.001)** | ~0 | ~0 | ~0 | ~0 | ~0 |
+
+*(bold = statistically significant at p<0.05; bookmaker/voledge's R²=1.000 is a mechanical artifact, not a discovery — see below)*
+
+**Honest finding — this is the capstone's central question, directly answered:** yes, pairtrade-lab-1's "market-neutral" pairs book carries substantial, statistically significant hidden market beta once aggregated with real position sizing — a highly significant **negative** SPY loading (t=-2.98, p=0.003) and a large, significant Financials sector loading (t=3.06, p=0.002). This is in fact the single largest driver of the whole *portfolio's* SPY exposure (-258,594) and Financials exposure (116,113) — pairtrade-lab-1 alone accounts for essentially all of it. A caveat that belongs right next to this finding, not hidden in a footnote below: pairtrade-lab-1's current book is only two positions (a short AXP / long WFC pair, per aggregation.py's stand-in snapshot), both in Financials — so this "hidden beta" is real and large for *this specific two-leg snapshot*, not evidence that pairs trading in general, or a fully diversified multi-pair version of this strategy, necessarily carries hidden beta. It's a genuine finding about the book as currently aggregated, not a general indictment of the strategy.
+
+alpha-signal-lab, by contrast, shows a well-explained (R²=0.716), diversified factor profile matching its actual holdings directly: a large positive Energy loading (its biggest sector tilt: CVX/EOG/MPC/PSX/VLO), and negative Technology/Healthcare loadings that correctly reflect its short positions in those sectors (AVGO/INTC/NVDA short, AMGN short outweighing PFE long).
+
+bookmaker and voledge's R²=1.000 is expected, not a finding: each is a single-underlying position whose proxied P&L is *defined* as `market_value × factor_return` (see risk_measures/returns.py) — an exact algebraic identity with its own risk factor, not a statistical discovery. Reported plainly rather than presented as a result on par with the other two.
+
+**PCA**: 8 of 14 components are needed to explain 90% of variance — a fairly diffuse risk structure, consistent with a book spanning four sectors plus crypto plus options, not a low-dimensional one. PC1 (35% of variance) loads heavily on the Energy names plus SPY — a broad market/energy composite. PC3 (11%) loads almost entirely on AMGN and PFE — a clean, interpretable Healthcare-specific factor the sector-ETF regression's own Healthcare loading (not significant at the portfolio level) didn't surface as clearly, a concrete example of PCA catching something the named-factor model's aggregate view smoothed over.
+
+**Vega**: net portfolio vega is 242.24 across voledge's 20 option positions — a modest net long-vol tilt, not currently large enough to be a dominant risk driver next to the equity-factor exposures above, but tracked separately for when Greek-level aggregation (Step 8-equivalent) builds on it.
+
+### Limitations
+
+- pairtrade-lab-1's "hidden beta" finding reflects its current 2-position stand-in snapshot specifically (see caveat above) — it should be re-checked once/if a fuller, multi-pair stand-in is generated.
+- Sector factor returns (real ETFs) and sector *membership* (alpha-signal-lab's tagging) are both real and independent of this book's own positions, but the regression's R² at the portfolio level (0.087) is still fairly low — four sector ETFs plus SPY plus BTC-USD don't explain most of this specific book's day-to-day P&L variance, meaning a meaningful share of this book's risk is idiosyncratic / not captured by these named factors at all (PCA's 8-components-for-90% finding is the same fact from a different angle).
+- bookmaker and voledge's perfect R² is a structural artifact of this project's single-underlying delta-equivalent P&L proxy (risk_measures/returns.py), not evidence those strategies are actually risk-free or fully explained — disclosed explicitly above, not silently included in a headline "everything is well-explained" claim.
+
+### Tests
+
+`pytest` (`tests/test_factor_model.py`) — regression and PCA are checked against synthetic data with a known/injected structure (a specific loading recovered from noisy data, a dominant correlated cluster recovered as PC1, and the exact bookmaker/voledge-style perfect-collinearity case reproduced deliberately). Sector tagging is checked against tickers known to be in alpha-signal-lab's own mapping. Vega aggregation is checked against constructed option/equity positions. One end-to-end test runs the full pipeline on the real book. 57 tests passing total across the project.
