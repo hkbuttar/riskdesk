@@ -106,9 +106,8 @@ def test_compare_pooled_vs_conditional_structural_invariants():
 
 
 def test_end_to_end_on_real_book():
-    import yfinance as yf
-
     from aggregation.valuation import value_positions
+    from connectors.alpaca_market_data import fetch_history
     from connectors.registry import fetch_all
     from regime.volatility_tercile import classify_regimes, rolling_realized_vol
     from risk_measures.returns import build_portfolio_pnl_series, fetch_return_history, position_risk_factor
@@ -119,8 +118,7 @@ def test_end_to_end_on_real_book():
     returns_df, _ = fetch_return_history(tickers)
     pnl_series, _weights, _ = build_portfolio_pnl_series(valued.positions, returns_df)
 
-    spy_close = yf.Ticker("SPY").history(period="2y")["Close"]
-    spy_close.index = spy_close.index.tz_localize(None)
+    spy_close = fetch_history(["SPY"], period="2y", field="close")["SPY"]
     regime_labels = classify_regimes(rolling_realized_vol(spy_close)).labels
 
     result = compare_pooled_vs_conditional(pnl_series, returns_df, regime_labels)

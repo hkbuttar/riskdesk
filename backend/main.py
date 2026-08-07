@@ -3,7 +3,7 @@ project, each a thin wrapper over that module's own functions -- no
 computation lives here that doesn't already live in the module it exposes.
 
 Endpoints recompute everything fresh on every request (fetching live data
-from connectors, Yahoo Finance, etc.) -- there is deliberately no caching
+from connectors, Alpaca, etc.) -- there is deliberately no caching
 layer. That's a real, disclosed limitation for production use (several
 endpoints, e.g. DCC-GARCH, the HMM, reverse stress, take multiple seconds),
 not an oversight; adding caching is real future work, not implemented here
@@ -29,6 +29,7 @@ from attribution.pnl import attribute_by_factor
 from attribution.strategy import attribute_by_strategy
 from backend.serialize import to_jsonable
 from connectors.registry import fetch_all
+from connectors.alpaca_market_data import fetch_history
 from correlation.dcc_garch import fit_dcc_garch
 from correlation.shrinkage import ledoit_wolf_covariance
 from correlation.static import static_correlation
@@ -60,12 +61,17 @@ from risk_measures.var import (
 from stress.hypothetical import HYPOTHETICAL_SCENARIOS, run_scenario
 from stress.historical import HISTORICAL_WINDOWS, fetch_price_history, replay_window
 
-app = FastAPI(title="RiskDesk API")
+app = FastAPI(
+    title="RiskDesk API",
+    description="Portfolio risk aggregation, stress testing, credit risk, and live monitoring.",
+    version="1.0.0",
+)
 
 _allowed_origins = os.environ.get("ALLOWED_ORIGINS", "*")
+_origins = [origin.strip() for origin in _allowed_origins.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if _allowed_origins == "*" else _allowed_origins.split(","),
+    allow_origins=["*"] if _allowed_origins.strip() == "*" else _origins,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
@@ -89,16 +95,13 @@ def _risk_factor_setup():
 
 
 def _spy_regime_labels():
-    import yfinance as yf
-
-    spy_close = yf.Ticker("SPY").history(period="2y")["Close"]
-    spy_close.index = spy_close.index.tz_localize(None)
+    spy_close = fetch_history(["SPY"], period="2y", field="close")["SPY"]
     return spy_close, classify_regimes(rolling_realized_vol(spy_close)).labels
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "service": "riskdesk", "version": app.version}
 
 
 @app.get("/api/positions")
@@ -278,6 +281,7 @@ def extreme_value(threshold_quantile: float = Query(0.80, gt=0.0, lt=1.0)) -> di
     comparison = fit_gpd_by_regime(pnl_series, regime_labels, threshold_quantile)
     return to_jsonable({
         "notes": comparison.notes,
+        "fits": comparison,
         "tail_shape_by_regime": compare_tail_shape(comparison),
     })
 

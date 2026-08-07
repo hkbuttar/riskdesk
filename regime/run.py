@@ -7,7 +7,7 @@ labels, reusing execedge's methodology) vs. a Markov-switching model
 
 from __future__ import annotations
 
-import yfinance as yf
+from connectors.alpaca_market_data import fetch_history
 
 from regime.hmm_regime import fit_hmm_regimes
 from regime.volatility_tercile import classify_regimes, rolling_realized_vol
@@ -16,8 +16,7 @@ REFERENCE_TICKER = "SPY"
 
 
 def main() -> None:
-    close = yf.Ticker(REFERENCE_TICKER).history(period="2y")["Close"]
-    close.index = close.index.tz_localize(None)
+    close = fetch_history([REFERENCE_TICKER], period="2y", field="close")[REFERENCE_TICKER]
     print(f"Reference series: {REFERENCE_TICKER}, {len(close)} daily closes.\n")
 
     print("=== Volatility-tercile regimes (execedge methodology, daily adaptation) ===")

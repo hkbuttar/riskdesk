@@ -29,9 +29,8 @@ disclosed reduction in sample size, not a gap-filling assumption.
 from __future__ import annotations
 
 import pandas as pd
-import yfinance as yf
-
 from aggregation.pricing import resolve_symbol
+from connectors.alpaca_market_data import fetch_history
 from connectors.schema import AssetClass, Position
 
 DEFAULT_LOOKBACK_PERIOD = "2y"
@@ -60,9 +59,7 @@ def fetch_return_history(
     if not resolved:
         return pd.DataFrame(), ["No tickers requested."]
 
-    raw = yf.download(resolved, period=period, auto_adjust=True, progress=False)["Close"]
-    if isinstance(raw, pd.Series):  # yfinance collapses to a Series for a single ticker
-        raw = raw.to_frame(resolved[0])
+    raw = fetch_history(resolved, period=period, field="close")
 
     missing = [t for t in resolved if t not in raw.columns or raw[t].dropna().empty]
     for t in missing:

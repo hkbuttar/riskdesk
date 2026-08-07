@@ -97,10 +97,9 @@ def test_hmm_regime_params_ordered_by_ascending_variance():
 
 
 def test_end_to_end_regime_classification_on_real_spy():
-    import yfinance as yf
+    from connectors.alpaca_market_data import fetch_history
 
-    close = yf.Ticker("SPY").history(period="1y")["Close"]
-    close.index = close.index.tz_localize(None)
+    close = fetch_history(["SPY"], period="1y", field="close")["SPY"]
 
     tercile = classify_regimes(rolling_realized_vol(close))
     assert set(tercile.labels.dropna().unique()) <= {"calm", "normal", "volatile"}

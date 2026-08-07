@@ -17,7 +17,7 @@ the standard, independent proxy.
 from __future__ import annotations
 
 import pandas as pd
-import yfinance as yf
+from connectors.alpaca_market_data import fetch_history
 
 # Copied verbatim from alpha-signal-lab/config/universe.py::SECTOR_TICKERS.
 SECTOR_TICKERS: dict[str, list[str]] = {
@@ -55,9 +55,7 @@ def fetch_factor_returns(sectors_held: set[str], period: str = "2y") -> tuple[pd
     etf_tickers = [SECTOR_ETF[s] for s in sectors_held if s in SECTOR_ETF]
     all_tickers = sorted({MARKET_FACTOR, CRYPTO_FACTOR, *etf_tickers})
 
-    raw = yf.download(all_tickers, period=period, auto_adjust=True, progress=False)["Close"]
-    if isinstance(raw, pd.Series):
-        raw = raw.to_frame(all_tickers[0])
+    raw = fetch_history(all_tickers, period=period, field="close")
 
     missing = [t for t in all_tickers if t not in raw.columns or raw[t].dropna().empty]
     for t in missing:

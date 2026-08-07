@@ -6,7 +6,7 @@ exposure.
 
 Concentration is computed only among counterparties with a real,
 non-zero default probability (Counterparty.NONE -- positions with no live
-venue, e.g. yfinance-sourced backtest data -- is excluded): there is no
+venue, e.g. market-data-sourced backtest positions -- is excluded): there is no
 real venue to be "concentrated" in for a position that isn't actually held
 anywhere, and including that bucket would make concentration figures
 meaningless (it currently holds the majority of this book's dollar

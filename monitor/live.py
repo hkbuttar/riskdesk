@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import sys
 
-import yfinance as yf
-
 from aggregation.rollup import portfolio_total
 from aggregation.valuation import value_positions
 from connectors.registry import fetch_all
+from connectors.alpaca_market_data import fetch_history
 from monitor.kill_switch import load_state, save_state
 from monitor.limits import check_credit_concentration_limit, check_var_limit
 from regime.conditional import compare_pooled_vs_conditional
@@ -39,8 +38,7 @@ def run_live_check() -> bool:
     returns_df, _ = fetch_return_history(tickers)
     pnl_series, _weights, _ = build_portfolio_pnl_series(valued.positions, returns_df)
 
-    spy_close = yf.Ticker(REFERENCE_TICKER).history(period="2y")["Close"]
-    spy_close.index = spy_close.index.tz_localize(None)
+    spy_close = fetch_history([REFERENCE_TICKER], period="2y", field="close")[REFERENCE_TICKER]
     regime_labels = classify_regimes(rolling_realized_vol(spy_close)).labels
     current_regime = regime_labels.dropna().iloc[-1]
     print(f"Current regime ({REFERENCE_TICKER}, most recent trading day): {current_regime}")

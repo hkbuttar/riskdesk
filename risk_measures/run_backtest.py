@@ -6,7 +6,7 @@ independence tests, pooled vs. regime-conditional.
 
 from __future__ import annotations
 
-import yfinance as yf
+from connectors.alpaca_market_data import fetch_history
 
 from aggregation.valuation import value_positions
 from connectors.registry import fetch_all
@@ -35,8 +35,7 @@ def main() -> None:
     returns_df, _ = fetch_return_history(tickers)
     pnl_series, _weights, _ = build_portfolio_pnl_series(valued.positions, returns_df)
 
-    spy_close = yf.Ticker("SPY").history(period="2y")["Close"]
-    spy_close.index = spy_close.index.tz_localize(None)
+    spy_close = fetch_history(["SPY"], period="2y", field="close")["SPY"]
     regime_labels = classify_regimes(rolling_realized_vol(spy_close)).labels
 
     print(f"=== VaR backtest: {CONFIDENCE:.0%} confidence, {len(pnl_series)} days ===\n")

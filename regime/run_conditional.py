@@ -7,7 +7,7 @@ model, on the real aggregated book.
 from __future__ import annotations
 
 import numpy as np
-import yfinance as yf
+from connectors.alpaca_market_data import fetch_history
 
 from aggregation.valuation import value_positions
 from connectors.registry import fetch_all
@@ -31,8 +31,7 @@ def main() -> None:
     for note in pnl_notes:
         print(f"  {note}")
 
-    spy_close = yf.Ticker(REFERENCE_TICKER).history(period="2y")["Close"]
-    spy_close.index = spy_close.index.tz_localize(None)
+    spy_close = fetch_history([REFERENCE_TICKER], period="2y", field="close")[REFERENCE_TICKER]
     regime_labels = classify_regimes(rolling_realized_vol(spy_close)).labels
     print(f"\nRegime reference: {REFERENCE_TICKER} volatility terciles.\n")
 

@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 monitor/state.json
+frontend/node_modules/
+frontend/dist/
+frontend/src/.observablehq/

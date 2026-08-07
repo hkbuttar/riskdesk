@@ -1,0 +1,28 @@
+:root {
+  --risk-ink: #dbe7f2;
+  --risk-muted: #8596a7;
+  --risk-panel: #101a24;
+  --risk-border: #243443;
+  --risk-cyan: #40d9c4;
+  --risk-amber: #ffbd59;
+  --risk-red: #ff667a;
+}
+
+body { background: #081018; color: var(--risk-ink); }
+#observablehq-main { max-width: 1480px; }
+h1 { font-weight: 650; letter-spacing: -0.04em; }
+h2 { margin-top: 2rem; }
+.hero { border-top: 1px solid var(--risk-border); padding-top: 1rem; }
+.eyebrow { color: var(--risk-cyan); font: 600 0.72rem/1.2 ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+.lede { color: var(--risk-muted); max-width: 72ch; font-size: 1.05rem; }
+.risk-card { background: linear-gradient(145deg, #111d28, #0d1720); border: 1px solid var(--risk-border); border-radius: 8px; padding: 1rem 1.1rem; min-height: 108px; }
+.risk-label { color: var(--risk-muted); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.risk-value { font: 600 1.65rem/1.2 ui-monospace, monospace; margin-top: .45rem; }
+.risk-note { color: var(--risk-muted); font-size: .78rem; margin-top: .35rem; }
+.status-ok { color: var(--risk-cyan); }
+.status-warn { color: var(--risk-amber); }
+.status-breach { color: var(--risk-red); }
+.data-warning { border-left: 3px solid var(--risk-amber); background: #211b10; padding: .8rem 1rem; color: #f4d59c; }
+.section-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+table { font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) { .risk-value { font-size: 1.3rem; } }

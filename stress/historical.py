@@ -30,9 +30,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
-
 from aggregation.pricing import resolve_symbol
+from connectors.alpaca_market_data import fetch_history
 from connectors.schema import Position
 from regime.volatility_tercile import classify_regimes, rolling_realized_vol
 from risk_measures.returns import position_risk_factor
@@ -55,12 +54,11 @@ HISTORICAL_WINDOWS: dict[str, dict[str, str]] = {
 
 
 def fetch_price_history(tickers: list[str], start: str, end: str) -> pd.DataFrame:
-    raw = yf.download(sorted(set(tickers)), start=start, end=end, auto_adjust=True, progress=False)["Close"]
-    if isinstance(raw, pd.Series):
-        raw = raw.to_frame(tickers[0])
-    if raw.index.tz is not None:
-        raw.index = raw.index.tz_localize(None)
-    return raw.dropna(how="any")
+    raw = fetch_history(sorted(set(tickers)), start=start, end=end, field="close")
+    # Preserve partial histories. Alpaca's crypto archive does not extend to
+    # every equity stress window (notably COVID), so forcing a complete-case
+    # intersection here would erase otherwise valid SPY/equity observations.
+    return raw.dropna(how="all")
 
 
 @dataclass
@@ -77,7 +75,8 @@ def replay_window(positions: list[Position], price_history: pd.DataFrame) -> Rep
     the window, to TODAY's market_value -- unpriced/unmappable positions
     are excluded (consistent with risk_measures/returns.py).
     """
-    returns = price_history.pct_change().dropna(how="any")
+    available_prices = price_history.dropna(axis=1, how="all")
+    returns = available_prices.pct_change(fill_method=None).dropna(how="any")
     if returns.empty:
         return None
 

@@ -60,6 +60,6 @@ COUNTERPARTY_PD: dict[Counterparty, PDTier] = {
     Counterparty.NONE: PDTier(
         tier="no_venue",
         annualized_pd=0.0,
-        rationale="No live counterparty (e.g. data sourced from yfinance, not traded).",
+        rationale="No live counterparty (e.g. market-data-sourced backtest position, not traded).",
     ),
 }

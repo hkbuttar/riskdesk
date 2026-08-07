@@ -59,7 +59,9 @@ def test_end_to_end_on_real_historical_windows():
     prices = fetch_price_history(["SPY", "BTC-USD"], earliest, latest)
 
     results = compare_during_stress_windows(prices, [("SPY", "BTC-USD")])
-    assert len(results) == len(HISTORICAL_WINDOWS)
+    # Alpaca's BTC/USD archive begins after the COVID window, so that pair is
+    # evaluated only where both histories genuinely exist.
+    assert {result.window_name for result in results} == {"2022_rate_hike", "ftx_collapse"}
     for r in results:
         assert -1.0 <= r.static_corr <= 1.0
         assert -1.0 <= r.dcc_mean_during_window <= 1.0

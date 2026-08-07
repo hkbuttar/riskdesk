@@ -28,7 +28,7 @@ class Counterparty(str, Enum):
     BINANCE = "binance"
     COINBASE = "coinbase"
     KRAKEN = "kraken"
-    NONE = "none"  # no live venue (e.g. yfinance-sourced backtest data)
+    NONE = "none"  # no live venue (e.g. market-data-sourced backtest positions)
 
 
 class DataProvenance(str, Enum):

@@ -18,11 +18,8 @@ with a more confident-looking number.
 
 Participation rate, here, is computed in DOLLAR terms uniformly across
 asset classes (`|market_value| / average_daily_dollar_volume`), not
-share/coin counts: Yahoo Finance's crypto "Volume" field (used for BTC-USD)
-is itself dollar-denominated, not coin-denominated, so mixing a raw BTC
-quantity against it would be a straightforward unit error. Dollar
-participation rate is also standard practice in real execution work, not
-a workaround invented just to paper over the crypto/equity mismatch.
+share/coin counts. Alpaca provides base-unit volume, so this module converts
+it to approximate dollar volume as close times volume for both asset classes.
 """
 
 from __future__ import annotations
@@ -30,9 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import yfinance as yf
-
 from aggregation.pricing import resolve_symbol
+from connectors.alpaca_market_data import fetch_daily_bars
 from connectors.schema import AssetClass, Position
 
 SQRT_LAW_Y = 1.0  # execedge's own disclosed "textbook order-of-magnitude" convention
@@ -48,12 +44,11 @@ class LiquidationCost:
 
 def fetch_avg_daily_dollar_volume(tickers: list[str], period: str = "3mo") -> dict[str, float]:
     resolved = sorted({resolve_symbol(t) for t in tickers})
-    data = yf.download(resolved, period=period, auto_adjust=True, progress=False)
-    close, volume = data["Close"], data["Volume"]
-    if isinstance(close, type(volume)) and len(resolved) == 1:
-        close, volume = close.to_frame(resolved[0]), volume.to_frame(resolved[0])
-    dollar_volume = (close * volume).mean()
-    return dollar_volume.to_dict()
+    bars = fetch_daily_bars(resolved, period=period)
+    return {
+        symbol: float((frame["close"] * frame["volume"]).mean())
+        for symbol, frame in bars.items() if not frame.empty
+    }
 
 
 def estimate_liquidation_cost(

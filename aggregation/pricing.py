@@ -10,8 +10,8 @@ two different points in time into one number. For live positions `as_of`
 is today (or the latest trading day), so this collapses to "current price"
 naturally; for backtest stand-ins it's a real historical lookup.
 
-Symbol translation: internal asset tickers occasionally don't match Yahoo
-Finance's symbol convention (e.g. bookmaker's "BTCUSDT" -> "BTC-USD").
+Symbol translation: internal asset tickers occasionally don't match Alpaca's
+canonical convention (e.g. bookmaker's "BTCUSDT" -> "BTC-USD").
 `SYMBOL_MAP` is the disclosed, explicit translation table -- deliberately
 not a guessing heuristic.
 """
@@ -21,7 +21,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-import yfinance as yf
+from connectors.alpaca_market_data import fetch_daily_bars
 
 SYMBOL_MAP: dict[str, str] = {
     "BTCUSDT": "BTC-USD",
@@ -45,7 +45,7 @@ def resolve_symbol(asset: str) -> str:
 
 
 def fetch_price_asof(asset: str, as_of: dt.date) -> PriceResult:
-    """Most recent close on or before `as_of`, via Yahoo Finance.
+    """Most recent close on or before `as_of`, via Alpaca.
 
     Never raises: network/lookup failures come back as a PriceResult with
     price=None and a note explaining why, matching the rest of this
@@ -60,9 +60,9 @@ def fetch_price_asof(asset: str, as_of: dt.date) -> PriceResult:
     end = as_of + dt.timedelta(days=_HISTORY_LOOKAHEAD_DAYS)
 
     try:
-        hist = yf.Ticker(symbol).history(start=start.isoformat(), end=end.isoformat())
+        hist = fetch_daily_bars([symbol], start=start, end=end).get(symbol)
     except Exception as exc:  # noqa: BLE001 - pricing boundary, disclose don't crash
-        result = PriceResult(price=None, source=symbol, note=f"yfinance error: {type(exc).__name__}: {exc}")
+        result = PriceResult(price=None, source=symbol, note=f"Alpaca error: {type(exc).__name__}: {exc}")
         _cache[cache_key] = result
         return result
 
@@ -77,6 +77,6 @@ def fetch_price_asof(asset: str, as_of: dt.date) -> PriceResult:
     used_date = row.name.date()
 
     note = "" if used_date == as_of else f"No close on {as_of}; used nearest available ({used_date})."
-    result = PriceResult(price=float(row["Close"]), source=symbol, note=note)
+    result = PriceResult(price=float(row["close"]), source=f"alpaca:{symbol}", note=note)
     _cache[cache_key] = result
     return result

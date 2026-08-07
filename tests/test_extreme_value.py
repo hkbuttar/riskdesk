@@ -124,9 +124,8 @@ def test_compare_tail_shape_table_includes_pooled_and_regime_rows():
 
 
 def test_end_to_end_on_real_book_both_thresholds():
-    import yfinance as yf
-
     from aggregation.valuation import value_positions
+    from connectors.alpaca_market_data import fetch_history
     from connectors.registry import fetch_all
     from regime.volatility_tercile import classify_regimes, rolling_realized_vol
     from risk_measures.returns import build_portfolio_pnl_series, fetch_return_history, position_risk_factor
@@ -137,8 +136,7 @@ def test_end_to_end_on_real_book_both_thresholds():
     returns_df, _ = fetch_return_history(tickers)
     pnl_series, _weights, _ = build_portfolio_pnl_series(valued.positions, returns_df)
 
-    spy_close = yf.Ticker("SPY").history(period="2y")["Close"]
-    spy_close.index = spy_close.index.tz_localize(None)
+    spy_close = fetch_history(["SPY"], period="2y", field="close")["SPY"]
     regime_labels = classify_regimes(rolling_realized_vol(spy_close)).labels
 
     for threshold in (0.90, 0.80):
