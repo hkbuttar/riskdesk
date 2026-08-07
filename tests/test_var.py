@@ -44,6 +44,23 @@ def test_parametric_var_matches_normal_formula_on_normal_data():
     assert result.var_dollar == pytest.approx(expected_var, rel=0.02)
 
 
+def test_parametric_cvar_matches_normal_closed_form_expected_shortfall():
+    # Closed-form expected shortfall for a normal loss distribution:
+    # ES = mu_loss + sigma * phi(z) / (1 - confidence), independent of the
+    # VaR check above -- both the VaR and CVaR formulas are verified,
+    # not just one implying the other.
+    rng = np.random.default_rng(6)
+    mu_pnl, sigma = -25.0, 500.0
+    pnl = pd.Series(rng.normal(loc=mu_pnl, scale=sigma, size=100_000))
+    confidence = 0.99
+    result = parametric_variance_covariance(pnl, confidence=confidence)
+
+    mu_loss = -mu_pnl
+    z = stats.norm.ppf(confidence)
+    expected_cvar = mu_loss + sigma * stats.norm.pdf(z) / (1 - confidence)
+    assert result.cvar_dollar == pytest.approx(expected_cvar, rel=0.02)
+
+
 def test_cornish_fisher_reduces_to_parametric_for_near_normal_data():
     rng = np.random.default_rng(1)
     pnl = pd.Series(rng.normal(loc=0.0, scale=500.0, size=100_000))

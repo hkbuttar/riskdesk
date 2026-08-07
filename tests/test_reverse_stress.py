@@ -70,6 +70,39 @@ def test_solve_reverse_stress_matches_closed_form_minimum_distance_solution():
     np.testing.assert_allclose(solved, closed_form, rtol=1e-3)
 
 
+def test_solve_reverse_stress_recovers_a_known_injected_scenario():
+    # Explicit "inject a known breaking scenario, verify the solver recovers
+    # it" round-trip: with a DIAGONAL covariance (uncorrelated factors), the
+    # true minimum-distance point has a simple, hand-verifiable closed form
+    # x_i = sigma_i^2 * L_i * target / sum_j(L_j^2 * sigma_j^2). Construct
+    # that point directly, compute the loss it produces going forward, then
+    # check solving backward from that same loss recovers the exact point.
+    rng = np.random.default_rng(7)
+    dates = pd.bdate_range("2020-01-01", periods=600)
+    # Uncorrelated factors (independent draws) -> the fitted covariance is
+    # close to diagonal, matching the closed-form assumption above.
+    factor_returns = pd.DataFrame(
+        {"A": rng.normal(0, 0.01, 600), "B": rng.normal(0, 0.02, 600)}, index=dates
+    )
+    loadings = {"A": 6000.0, "B": -4000.0}
+    horizon_days = 21
+
+    from correlation.shrinkage import ledoit_wolf_covariance
+
+    horizon_returns = to_horizon_returns(factor_returns, horizon_days)
+    sigma = ledoit_wolf_covariance(horizon_returns).covariance.to_numpy()
+    loading_vec = np.array([loadings["A"], loadings["B"]])
+
+    target_loss = 25000.0
+    known_scenario = sigma @ loading_vec * (-target_loss) / (loading_vec @ sigma @ loading_vec)
+    injected_pnl = loading_vec @ known_scenario  # what this scenario actually produces, forward
+
+    result = solve_reverse_stress(loadings, 0.0, factor_returns, target_loss=-injected_pnl, horizon_days=horizon_days)
+    recovered = np.array([result.factor_shocks["A"], result.factor_shocks["B"]])
+
+    np.testing.assert_allclose(recovered, known_scenario, rtol=1e-3)
+
+
 def test_mahalanobis_distance_grows_with_target_loss():
     rng = np.random.default_rng(2)
     dates = pd.bdate_range("2020-01-01", periods=600)

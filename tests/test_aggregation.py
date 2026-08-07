@@ -154,3 +154,52 @@ def test_end_to_end_against_real_connectors_and_real_prices():
     total = portfolio_total(result.positions)
     assert total.n_priced == result.n_priced
     assert total.gross_market_value >= abs(total.net_market_value)
+
+
+def test_strategy_rollups_reconcile_exactly_to_portfolio_total():
+    # Aggregation correctness invariant: summing every strategy-level bucket
+    # must reproduce the portfolio-level total exactly -- net and gross both
+    # -- since a rollup is just a partition of the same underlying positions.
+    positions = [
+        _equity_position(strategy="a", asset="AAPL", quantity=10.0),
+        _equity_position(strategy="a", asset="MSFT", quantity=-5.0),
+        _equity_position(strategy="b", asset="AAPL", quantity=3.0),
+        _option_position(quantity=2.0),
+        _synthetic_position(),
+    ]
+    result = value_positions(positions)
+    total = portfolio_total(result.positions)
+    strategy_buckets = by_strategy(result.positions)
+
+    assert sum(b.net_market_value for b in strategy_buckets.values()) == pytest.approx(total.net_market_value)
+    assert sum(b.gross_market_value for b in strategy_buckets.values()) == pytest.approx(total.gross_market_value)
+    assert sum(b.n_positions for b in strategy_buckets.values()) == total.n_positions
+    assert sum(b.n_priced for b in strategy_buckets.values()) == total.n_priced
+    assert sum(b.n_unpriced for b in strategy_buckets.values()) == total.n_unpriced
+
+
+def test_asset_class_and_counterparty_rollups_also_reconcile():
+    positions = [
+        _equity_position(strategy="a", asset="AAPL", quantity=10.0),
+        _option_position(quantity=1.0),
+        _synthetic_position(),
+    ]
+    result = value_positions(positions)
+    total = portfolio_total(result.positions)
+
+    for rollup_fn in (by_asset_class, by_counterparty):
+        buckets = rollup_fn(result.positions)
+        assert sum(b.net_market_value for b in buckets.values()) == pytest.approx(total.net_market_value)
+        assert sum(b.gross_market_value for b in buckets.values()) == pytest.approx(total.gross_market_value)
+        assert sum(b.n_positions for b in buckets.values()) == total.n_positions
+
+
+def test_empty_position_list_produces_zeroed_portfolio_total_not_an_error():
+    result = value_positions([])
+    assert result.n_priced == 0
+    assert result.n_unpriced == 0
+    total = portfolio_total(result.positions)
+    assert total.net_market_value == 0.0
+    assert total.gross_market_value == 0.0
+    assert total.n_positions == 0
+    assert by_strategy(result.positions) == {}

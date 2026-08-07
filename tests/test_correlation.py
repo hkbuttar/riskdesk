@@ -102,6 +102,46 @@ def test_dcc_garch_correlation_series_moves_toward_the_later_regime(dcc_regime_s
     assert late_avg > early_avg
 
 
+def test_ledoit_wolf_shrinkage_decreases_with_sample_size_for_same_structure():
+    # Sanity check on the shrinkage constant's own behavior, not just its
+    # effect: for the SAME genuine correlation structure, a larger sample
+    # should need less shrinkage (more confidence in the sample estimate),
+    # not that "well-conditioned" alone implies low shrinkage -- a sample
+    # that's genuinely close to the shrinkage target (e.g. near-independent
+    # assets) can rationally shrink heavily regardless of sample size.
+    rng = np.random.default_rng(8)
+    n_large, n_small = 2000, 30
+    factor = rng.normal(0, 0.02, n_large)
+    data = {c: factor + rng.normal(0, 0.005, n_large) for c in "abcd"}
+    df_large = pd.DataFrame(data)
+    df_small = df_large.iloc[:n_small]
+
+    shrinkage_large = ledoit_wolf_covariance(df_large).shrinkage
+    shrinkage_small = ledoit_wolf_covariance(df_small).shrinkage
+    assert shrinkage_large < shrinkage_small
+
+
+def test_dcc_garch_collapses_toward_static_correlation_with_no_true_dynamics():
+    # Sanity check: data with a genuinely constant (non-time-varying)
+    # correlation should be correctly detected as such -- fitted
+    # persistence should be low and the dynamic correlation series should
+    # stay close to the static correlation throughout, not drift or swing
+    # on data that has no real regime structure to find.
+    rng = np.random.default_rng(9)
+    n = 500
+    dates = pd.bdate_range("2022-01-01", periods=n)
+    data = rng.multivariate_normal([0, 0], [[1, 0.3], [0.3, 1]], size=n) * 0.01
+    df = pd.DataFrame(data, index=dates, columns=["A", "B"])
+
+    result = fit_dcc_garch(df)
+    static_corr = df.corr().loc["A", "B"]
+    series = result.correlation_series("A", "B")
+
+    assert result.b < 0.3  # low persistence -- no real dynamics to sustain
+    assert series.mean() == pytest.approx(static_corr, abs=0.1)
+    assert series.std() < 0.1  # stays close to static, doesn't swing widely
+
+
 def test_dcc_garch_end_to_end_on_real_book():
     from aggregation.valuation import value_positions
     from connectors.registry import fetch_all
