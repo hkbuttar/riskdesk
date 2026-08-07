@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done.** Reverse stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done.** Credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -338,4 +338,37 @@ The other three scenarios show smaller, still real convexity effects (all positi
 
 ### Tests
 
-`pytest` (`tests/test_hypothetical_stress.py`) — repricing is checked against constructed positions with known Greeks/market values, including hand-computing the full delta+gamma+vega Taylor expansion and confirming it matches exactly. Sector-override precedence, synthetic/unpriced-position handling, and aggregation across mixed asset classes are all checked directly. One end-to-end test runs every real scenario on the real book. 83 tests passing total across the project.
+`pytest` (`tests/test_hypothetical_stress.py`) — repricing is checked against constructed positions with known Greeks/market values, including hand-computing the full delta+gamma+vega Taylor expansion and confirming it matches exactly. Sector-override precedence, synthetic/unpriced-position handling, and aggregation across mixed asset classes are all checked directly. One end-to-end test runs every real scenario on the real book.
+
+## Reverse Stress Testing (`reverse_stress/`)
+
+The plan's own framing for this module: "the single most differentiated addition to the whole capstone." Every other stress module in this project asks "apply scenario X, measure loss Y." This asks the opposite: "what combination of factor moves produces a specific target loss, and how plausible is that, really?"
+
+- **`optimization.py`** — models portfolio P&L as linear in the named factors (`factor_model/regression.py`'s own fitted loadings, reused directly, not re-derived). The set of factor-move combinations producing exactly a target loss is a hyperplane in factor space; of all points on it, the most plausible under a multivariate-normal assumption is the one at **minimum Mahalanobis distance** from zero — solved as a quadratic program via `cvxpy` (`minimize x^T Σ⁻¹x subject to loadings^T x + α == -target_loss`), using the Ledoit-Wolf-shrunk factor covariance (`correlation/shrinkage.py`, reused directly) rather than the raw sample covariance, for the same numerical-stability reason shrinkage was built in the first place.
+- **A real scale bug was caught and fixed building this.** The first version solved the QP against a *daily* factor covariance, producing scenarios like "SPY +33% tomorrow" — nonsensical as a single-day move and impossible to compare against the multi-week historical crisis windows already in this project. Fixed by solving over a disclosed ~1-trading-month horizon (`to_horizon_returns`: overlapping 21-day rolling sums of daily returns, a linear approximation of compounding — and the regression's own daily alpha scaled by the same 21 days for consistency) instead of a single day.
+- **`plausibility.py`** — two honest answers to "how likely is that, really," per the plan's own requirement: (1) the same solved scenario's Mahalanobis distance recomputed under the **volatile-regime-conditional** factor covariance instead of the pooled one (reusing `regime/volatility_tercile.py` directly); (2) the solved scenario's per-factor shock set next to what each factor **actually did**, factor by factor, during the three real historical windows already replayed in `stress/historical.py`.
+
+As of this writing (`python -m reverse_stress.run`, portfolio factor model R²=0.087):
+
+| Target loss | SPY | XLK | XLE | BTC-USD | Mahalanobis SD (pooled) | Implied probability |
+|---|---|---|---|---|---|---|
+| 10% (\$70,678) | +32.8% | +54.9% | -11.7% | -11.6% | 11.9 | ~0% |
+| 25% (\$176,695) | +80.0% | +133.9% | -28.4% | -28.3% | 29.0 | ~0% |
+| 50% (\$353,389) | +158.7% | +265.4% | -56.4% | -56.2% | 57.6 | ~0% |
+
+**Honest finding #1 — the single most important, and most uncomfortable, result this project has produced: the "most plausible" way to break this specific book does not look like a historical crash at all, it looks like a rally.** The solver consistently finds that SPY and XLK **rising** (not falling) is the minimum-distance path to a large loss — a direct, mechanical consequence of the factor decomposition's own earlier finding: this book carries a large, significant *negative* SPY loading (pairtrade-lab-1's hidden short-market beta) and negative Technology/Healthcare loadings (alpha-signal-lab's short AVGO/INTC/NVDA/AMGN positions). None of the three real historical crisis windows in `stress/historical.py` look anything like this — COVID, 2022, and FTX all show SPY, XLK, and BTC-USD moving *down together*, not up. This is not a bug in the optimizer; it is reverse stress testing doing exactly its job: finding the scenario the portfolio is actually exposed to, which is not the scenario intuition (or a standard "equity crash" hypothetical, like the one in `stress/hypothetical.py`) would suggest.
+
+**Honest finding #2 — every solved scenario is a many-standard-deviation, near-zero-probability event under both the pooled and volatile-regime-conditional covariances, and the two barely differ.** Even the smallest target (a 10% portfolio loss) requires an ~11.9 SD combined move (pooled) vs. ~12.0 SD (volatile-regime-conditional) — essentially the same, unlike the historical-replay section's finding where regime-conditioning materially changed the answer. This is itself informative: it means the *direction* of the required move (a rally, not a crash) is so far outside what either covariance considers typical that regime-conditioning on "how volatile were things" barely moves the needle — the problem isn't magnitude, it's that this book's risk is concentrated in a direction (rising SPY + rising tech + falling energy/crypto simultaneously) that essentially never happens historically, calm or stressed.
+
+**A real limitation that has to be stated prominently, not buried:** the portfolio's own named-factor model has R²=0.087 (from the factor-decomposition section) — the six named factors barely explain this book's actual daily P&L variance, because pairtrade-lab-1's idiosyncratic AXP/WFC spread (the book's largest position by far) isn't well spanned by any of them. A reverse-stress scenario solved against a weak factor model is correspondingly less trustworthy as "the" plausible path to a loss — it may be finding an artifact of which six factors happen to load significantly, rather than a genuine description of this book's real risk. This isn't a caveat added after the fact to excuse a strange-looking result; it's the honest reason the result looks strange, and it is exactly the kind of finding reverse stress testing is supposed to produce: not just "here's a scenario," but "here's what that scenario reveals about whether your risk model actually describes your risk."
+
+### Limitations
+
+- The linear factor-model approximation (already used throughout this project) is least trustworthy exactly where reverse stress testing pushes it hardest — the solved scenarios (SPY up 33%–159% over a month) are far outside the range the model was ever fit on, an extrapolation, not an interpolation.
+- R²=0.087 (see finding above) means these solved scenarios should be read as "what a 6-factor model implies," not as this project's confident answer to "what would actually break this portfolio" — a genuinely low-R² book needs either more/better factors or should lean more heavily on the historical-replay and hypothetical-scenario modules instead.
+- The historical-window comparison table still isn't a perfect horizon match (COVID: 23 days, FTX: 4 days, 2022: 195 days, vs. the solved scenario's 21-day horizon) — closer than the original daily-vs-multi-week mismatch, but not exact.
+- Options convexity (gamma/vega, `aggregation/greeks.py`) is not folded into the reverse-stress solve — the linear factor loadings used here already embed voledge's delta-only proxy, the same simplification flagged in the hypothetical-scenarios section.
+
+### Tests
+
+`pytest` (`tests/test_reverse_stress.py`) — the optimizer's `cvxpy` solution is checked against an independently-computed closed-form solution (the minimum-Mahalanobis-distance-subject-to-a-linear-constraint problem has a known Lagrangian closed form) and against exact constraint satisfaction. Mahalanobis distance is checked against a hand-computable diagonal-covariance case. One end-to-end test runs the full pipeline on the real book. 89 tests passing total across the project.
