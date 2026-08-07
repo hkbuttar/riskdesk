@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done.** Stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done.** Stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -236,4 +236,38 @@ bookmaker and voledge's R²=1.000 is expected, not a finding: each is a single-u
 
 ### Tests
 
-`pytest` (`tests/test_factor_model.py`) — regression and PCA are checked against synthetic data with a known/injected structure (a specific loading recovered from noisy data, a dominant correlated cluster recovered as PC1, and the exact bookmaker/voledge-style perfect-collinearity case reproduced deliberately). Sector tagging is checked against tickers known to be in alpha-signal-lab's own mapping. Vega aggregation is checked against constructed option/equity positions. One end-to-end test runs the full pipeline on the real book. 57 tests passing total across the project.
+`pytest` (`tests/test_factor_model.py`) — regression and PCA are checked against synthetic data with a known/injected structure (a specific loading recovered from noisy data, a dominant correlated cluster recovered as PC1, and the exact bookmaker/voledge-style perfect-collinearity case reproduced deliberately). Sector tagging is checked against tickers known to be in alpha-signal-lab's own mapping. Vega aggregation is checked against constructed option/equity positions. One end-to-end test runs the full pipeline on the real book.
+
+## Greeks & Options Risk Aggregation (`aggregation/greeks.py`)
+
+**Scope boundary, deliberate:** this aggregates the options book's own Greeks and quantifies its own convexity against a hypothetical underlying move. It does not reprice the whole portfolio (equities + crypto + options together) under a shock — that's full stress testing, separate future work. What's here is self-contained: how wrong is the delta-only P&L estimate for the options book specifically, once the underlying moves far enough for gamma to matter.
+
+- **`aggregate_greeks()`** — net delta (share- and dollar-equivalent), gamma, vega, theta, rho across every option position, plus a per-position breakdown.
+- **`gamma_convexity_table()`** — for a range of hypothetical SPY moves (±2%, ±5%, ±10%), compares the **delta-only (linear)** P&L estimate — the exact approximation `risk_measures/returns.py` and `factor_model` both use for options everywhere else in this project — against a **delta+gamma (second-order Taylor)** estimate, isolating the pure gamma contribution.
+
+As of this writing (`python -m aggregation.run_greeks`, 20 real option positions):
+
+| | net delta | net gamma | net vega | net theta | net rho |
+|---|---|---|---|---|---|
+| Portfolio | 2.85 shares (\$2,203) | 0.485 | \$242 | -\$1,018/day | \$26 |
+
+| SPY move | Linear (delta-only) | Quadratic (delta+gamma) | Gamma correction | % of linear |
+|---|---|---|---|---|
+| -10% | -\$220 | \$1,229 | +\$1,449 | +658% |
+| -5% | -\$110 | \$252 | +\$362 | +329% |
+| -2% | -\$44 | \$14 | +\$58 | +132% |
+| +2% | \$44 | \$102 | +\$58 | +132% |
+| +5% | \$110 | \$472 | +\$362 | +329% |
+| +10% | \$220 | \$1,670 | +\$1,449 | +658% |
+
+**Honest finding — this is a material, quantified problem with an approximation used throughout the rest of this project, not a minor footnote.** This options book is nearly delta-neutral (net delta of only 2.85 shares / \$2,203) but carries substantial positive net gamma (0.485). Because the linear term is close to zero by construction, the gamma correction *dominates* the total P&L at every move size shown — at a 10% SPY move, the delta-only estimate used everywhere else in this project (VaR, factor regression, the pooled/regime-conditional models) is off by nearly 7x, understating the true P&L. The correction scales with the square of the move, exactly as gamma convexity should — small and mostly ignorable at ±2%, dominant at ±10%. This directly quantifies a limitation flagged only qualitatively in earlier sections ("delta-only P&L misses gamma/theta effects that matter most exactly during the large moves VaR cares about," from the VaR section) — now with an actual number attached.
+
+### Limitations
+
+- This convexity check covers gamma only; theta (time decay) and vega (IV-move) effects are aggregated but not folded into the stress table above — a full options-aware stress scenario needs all three, future work alongside the broader stress-testing module.
+- The gamma correction is computed per-position and summed; it does not account for correlation between the options book's convexity and the rest of the portfolio's linear moves under the same shock (e.g. does gamma P&L help or hurt exactly when the rest of the book is also losing money) — that cross-asset interaction is explicitly deferred to full stress testing, not attempted here.
+- All 20 option positions share one underlying (SPY) in this book currently, so this table's "move" is unambiguous; a book with multiple option underlyings would need the convexity table broken out per underlying rather than summed together (the code supports it — each position's own spot is used — but the current book doesn't exercise that path).
+
+### Tests
+
+`pytest` (`tests/test_greeks.py`) — Greek aggregation is checked against constructed positions with known values (exact hand-computable sums). Convexity is checked for the textbook properties directly: zero gamma collapses quadratic to linear exactly, the correction scales with the square of the move size, and positive/negative gamma add/subtract value symmetrically in both directions. One end-to-end test runs on the real book. 64 tests passing total across the project.
