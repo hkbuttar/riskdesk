@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done. Liquidity-adjusted risk & concentration — done. P&L attribution — done.** Live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done. Liquidity-adjusted risk & concentration — done. P&L attribution — done. Live risk monitoring — done.** All risk-analytics modules are now built. Backend and frontend are not yet started.
 
 **This is the point in the project where scope explicitly widens beyond pure market risk.** Every module up to here answers some version of "what if the market moves against this book." Counterparty & credit risk, below, answers a genuinely different question: "what if the entity holding this book's assets — Alpaca, Binance, Coinbase, Kraken — disappears," independent of what the market does. Worth stating plainly since it's a different risk category, not a variation on the same one.
 
@@ -503,4 +503,41 @@ As of this writing (`python -m attribution.run`, last 63 trading days):
 
 ### Tests
 
-`pytest` (`tests/test_attribution.py`) — factor attribution is checked for exact reconciliation (constructed cases with known injected noise, confirming the residual recovers that exact noise series) and against hand-computable single-factor contributions. Strategy attribution is checked for additivity — per-strategy P&L series must sum back to the whole portfolio's, since P&L is linear by construction — and for correctly excluding strategies with no mappable positions. One end-to-end test runs the full pipeline and checks reconciliation on the real book. 126 tests passing total across the project.
+`pytest` (`tests/test_attribution.py`) — factor attribution is checked for exact reconciliation (constructed cases with known injected noise, confirming the residual recovers that exact noise series) and against hand-computable single-factor contributions. Strategy attribution is checked for additivity — per-strategy P&L series must sum back to the whole portfolio's, since P&L is linear by construction — and for correctly excluding strategies with no mappable positions. One end-to-end test runs the full pipeline and checks reconciliation on the real book.
+
+## Live Risk Monitoring (`monitor/`)
+
+The last risk-analytics module. Pulls live positions, recomputes VaR using **whichever regime-conditional model currently applies** (falling back to the pooled model, explicitly, when the current regime doesn't have enough historical days for its own — the exact mechanism `regime/run_conditional.py`'s "live monitoring readiness" section already demonstrated, now built into an actual live-check entry point), checks market-risk and credit-risk limits independently, and feeds both into a kill-switch.
+
+**The kill-switch reuses alpha-signal-lab's own established pattern directly, not a new design.** alpha-signal-lab's `risk/kill_switch.py::KillSwitch` (and pairtrade-lab-1's own kill-switch, same shape) is manual-reset-only: once triggered, `.triggered` stays `True` until `.reset()` is called explicitly, so a kill-switch doesn't silently re-arm itself just because the breach that caused it happens to clear on the next check. This module's `monitor/kill_switch.py::KillSwitch` matches that exact shape (`.triggered` / `.check()` / `.reset()`), extended per the plan's own requirement to trigger on multiple independent conditions — market-risk (VaR vs. a disclosed 5%-of-gross-exposure limit) or credit-risk (`credit/concentration.py`'s counterparty concentration check, reused directly) — rather than the sibling repos' single-condition (equity drawdown) switches.
+
+**A real design difference from the sibling repos' switches, worth stating explicitly:** their kill-switches only need to survive across bars *within* one backtest run — an in-memory object is enough, since the whole run is one process. This project's monitor is meant to be invoked repeatedly (e.g. on a schedule) as a genuinely live, recurring check; for "stays triggered until manually reset" to mean anything *across separate process invocations*, state has to be written to disk and reloaded, not just held in memory. `monitor/kill_switch.py::load_state`/`save_state` persist to `monitor/state.json` (gitignored — it's runtime state, not source) for exactly this reason.
+
+As of this writing (`python -m monitor.live`):
+
+```
+Live positions pulled: 33 (33 priced). Gross exposure: $706,779.08
+Current regime (SPY, most recent trading day): normal
+Active VaR model: normal-conditional -> $6,110.21
+  VaR is 0.86% of gross exposure (limit 5%)
+  Counterparty concentration breached: ['binance'] (HHI=0.596)
+
+*** KILL-SWITCH: TRIGGERED NOW ***
+  - Counterparty concentration breached: ['binance'] (HHI=0.596)
+  Manual reset required: python -m monitor.live --reset
+```
+
+Reset persists correctly across separate invocations (verified directly, not just asserted): `python -m monitor.live --reset`, then a fresh `python -m monitor.live` re-triggers cleanly from the same real breach, not from stale in-memory state.
+
+**Honest finding:** the market-risk (VaR) limit is nowhere close to breached (0.86% vs. a 5% limit) — consistent with every VaR figure reported throughout this project for this book's actual current size. The kill-switch trips purely on the **credit-risk** side: the same Binance concentration finding from the counterparty & credit risk section. This is a genuinely useful demonstration of the plan's own requirement that market-risk and credit-risk limits be "independently triggerable" — here, only one of the two categories is actually live-triggering, and the live monitor reports that distinction plainly (which limit, not just that some limit) rather than collapsing both into one undifferentiated "risk is high" signal.
+
+### Limitations
+
+- This is a one-shot script re-run on demand (or externally scheduled, e.g. via cron), not a persistent running service with its own event loop — appropriate for this project's scope, but "near-real-time" here means "as fresh as the last invocation," not a continuously streaming feed.
+- The 5% VaR/gross-exposure limit is a disclosed, round-number judgment call, not derived from this book's actual risk tolerance or any formal limit-setting framework (the same caveat already stated for liquidity/concentration.py's thresholds).
+- The kill-switch currently checks two limit categories (VaR, credit concentration); it does not yet also check the name/strategy/sector concentration limits already built in liquidity/concentration.py — a natural, straightforward extension not implemented here to keep the live-check's output focused on the two categories the plan explicitly calls out.
+- `monitor/state.json` is a single local file, not a shared/durable store — fine for this project's scope, but a real production deployment would need the kill-switch state itself to survive the monitor process's own host disappearing, which a local file does not guarantee.
+
+### Tests
+
+`pytest` (`tests/test_monitor.py`) — the kill-switch state machine is checked directly for manual-reset-only semantics (stays triggered after the breach clears, does not duplicate reasons across repeated checks) and for persistence surviving separate load/save cycles (simulating separate process invocations, not just an in-memory round-trip). Limit checks are checked against hand-computable breach/no-breach cases. One end-to-end test runs the real live-check pipeline with kill-switch persistence isolated to a temp path, so the test suite never mutates the real `monitor/state.json`. 138 tests passing total across the project.
