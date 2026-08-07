@@ -14,3 +14,8 @@ python-dotenv
 yfinance
 pytest
 httpx
+jupyter
+ipykernel
+matplotlib
+nbformat
+nbclient
