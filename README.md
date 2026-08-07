@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done. Liquidity-adjusted risk & concentration — done.** Attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done. Liquidity-adjusted risk & concentration — done. P&L attribution — done.** Live monitoring, backend, and frontend are not yet started.
 
 **This is the point in the project where scope explicitly widens beyond pure market risk.** Every module up to here answers some version of "what if the market moves against this book." Counterparty & credit risk, below, answers a genuinely different question: "what if the entity holding this book's assets — Alpaca, Binance, Coinbase, Kraken — disappears," independent of what the market does. Worth stating plainly since it's a different risk category, not a variation on the same one.
 
@@ -471,4 +471,36 @@ As of this writing (`python -m liquidity.run`):
 
 ### Tests
 
-`pytest` (`tests/test_liquidity.py`) — impact cost is checked against the exact square-root-law formula by hand, including confirming the textbook property that cost scales with the square root (not linearly) of position size, and that it's symmetric for long/short positions of equal magnitude. Concentration is checked against constructed positions with known exposures, including a direct test of the deliberate gross-vs-net difference from credit/concentration.py. One end-to-end test runs the full pipeline on the real book. 120 tests passing total across the project.
+`pytest` (`tests/test_liquidity.py`) — impact cost is checked against the exact square-root-law formula by hand, including confirming the textbook property that cost scales with the square root (not linearly) of position size, and that it's symmetric for long/short positions of equal magnitude. Concentration is checked against constructed positions with known exposures, including a direct test of the deliberate gross-vs-net difference from credit/concentration.py. One end-to-end test runs the full pipeline on the real book.
+
+## P&L Attribution (`attribution/`)
+
+Decomposes a P&L series -- day by day -- into the portion explained by each named factor, an alpha (intercept) term, and a residual, reusing `factor_model/regression.py`'s own fitted loadings directly rather than re-deriving them. This is a different deliverable from the factor-decomposition section itself: that section reports static coefficients ("the book has X exposure to SPY"); this one walks those loadings back across a real window to show cumulative *dollar* contribution ("SPY moves accounted for $Y of this window's actual P&L").
+
+- **`pnl.py::attribute_by_factor`** — the residual is defined as whatever's left over after factor contributions and alpha are subtracted from actual P&L, which makes `sum(factor contributions) + alpha + residual == total P&L` hold **exactly**, not approximately — checked directly (`.reconciles()`), not merely asserted. A real attribution has to tie out to the total to be trustworthy.
+- **`strategy.py::attribute_by_strategy`** — the same hypothetical-historical-P&L split already used inline in `stress/historical.py` and `factor_model/run.py`, centralized here as the canonical attribution entry point rather than left duplicated a third time.
+- **Methodology, disclosed**: factor loadings are fit on the full 2-year window (for stable coefficients) but *attributed* over just the most recent ~3 months (63 trading days) — a standard practice (longer estimation window, shorter attribution window), not a new kind of claim; this is still the project's established hypothetical-historical-P&L framing (today's positions × historical returns), not a real trading track record.
+
+As of this writing (`python -m attribution.run`, last 63 trading days):
+
+| | Total | SPY | XLF | XLK | XLE | XLV | BTC-USD | alpha | residual |
+|---|---|---|---|---|---|---|---|---|---|
+| **Portfolio** | \$11,226 | -\$15,623 | \$13,558 | \$3,682 | \$1,290 | -\$3,214 | -\$2,516 | \$9,089 | \$4,959 |
+| alpha-signal-lab | \$1,664 | -\$207 | \$760 | -\$2,247 | \$1,069 | -\$1,538 | \$59 | \$3,769* | — |
+| pairtrade-lab-1 | \$9,979 | -\$15,550 | \$12,799 | \$5,929 | \$221 | -\$1,676 | -\$2,024 | \$10,279* | — |
+| bookmaker | -\$550 | ~0 | ~0 | ~0 | ~0 | ~0 | -\$550 | ~0* | — |
+| voledge | \$133 | \$133 | ~0 | ~0 | ~0 | ~0 | ~0 | ~0* | — |
+
+*(per-strategy alpha and residual are combined in the table above; reconciles exactly to each strategy's total, same as the portfolio-level row)*
+
+**Honest finding — this is the fourth independent module in this project to converge on the same root cause, now expressed as a dollar attribution rather than a statistical test.** \$9,979 of this window's \$11,226 total P&L (89%) came from pairtrade-lab-1 alone, and of that, \$10,279 is alpha+residual — i.e. *more than its entire realized P&L* is unexplained by any named factor (offset by a small negative net factor contribution). This is the same fact the factor-decomposition section found as a low R² (0.062) and a significant SPY/Financials loading, the aggregation section found as a capital-base mismatch, and the liquidity section found as a concentration-limit breach — now shown as an actual dollar figure: the book's realized P&L this window was overwhelmingly driven by one strategy's idiosyncratic, factor-unexplained risk, not by any of the six named market factors this project built.
+
+### Limitations
+
+- Same disclosed limitation as risk_measures/returns.py throughout this project: this is a hypothetical replay (today's position sizes × historical returns), not a real trading track record — several strategies (bookmaker, pairtrade-lab-1, voledge) weren't running as currently configured over this actual calendar window.
+- The 63-day attribution window is a disclosed round-number choice (~1 quarter), not derived from any particular reporting cadence requirement.
+- Per-strategy attribution uses each strategy's own separately-fit factor loadings (matching factor_model/run.py's own per-strategy regressions) rather than the portfolio-level loadings applied strategy-by-strategy — a deliberate choice (each strategy's own factor exposure is what actually explains its own P&L) stated so the portfolio-level and per-strategy factor columns in the table above aren't mistaken for using the same coefficients.
+
+### Tests
+
+`pytest` (`tests/test_attribution.py`) — factor attribution is checked for exact reconciliation (constructed cases with known injected noise, confirming the residual recovers that exact noise series) and against hand-computable single-factor contributions. Strategy attribution is checked for additivity — per-strategy P&L series must sum back to the whole portfolio's, since P&L is linear by construction — and for correctly excluding strategies with no mappable positions. One end-to-end test runs the full pipeline and checks reconciliation on the real book. 126 tests passing total across the project.
