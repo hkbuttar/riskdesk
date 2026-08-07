@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done.** Hypothetical stress scenarios, reverse stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done.** Reverse stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -251,6 +251,8 @@ As of this writing (`python -m aggregation.run_greeks`, 20 real option positions
 |---|---|---|---|---|---|
 | Portfolio | 2.85 shares (\$2,203) | 0.485 | \$242 | -\$1,018/day | \$26 |
 
+*(net vega is voledge's raw Black-Scholes vega, `dV/dσ` with σ in decimal — i.e. \$ P&L per 1.00 / 100-vol-point IV move, matching voledge's own documented convention; a 1-point (0.01) IV move is \$2.42, not \$242 — a units mix-up caught and fixed while building the stress-scenario module below, which needed to get this exactly right to size a vega shock correctly.)*
+
 | SPY move | Linear (delta-only) | Quadratic (delta+gamma) | Gamma correction | % of linear |
 |---|---|---|---|---|
 | -10% | -\$220 | \$1,229 | +\$1,449 | +658% |
@@ -306,4 +308,34 @@ As of this writing (`python -m stress.run_historical`):
 
 ### Tests
 
-`pytest` (`tests/test_historical_stress.py`) — replay math and the diversification-erosion ratio are checked against constructed positions/price series with exact hand-computable expected values (including the textbook sqrt(2) erosion ratio for two perfectly correlated equal-vol strategies, and a ratio of exactly 0 for perfectly offsetting ones). VaR breach counting is checked against a synthetic window with an injected, known number of extreme-loss days. One end-to-end test runs the real book against a real disclosed historical window. 73 tests passing total across the project.
+`pytest` (`tests/test_historical_stress.py`) — replay math and the diversification-erosion ratio are checked against constructed positions/price series with exact hand-computable expected values (including the textbook sqrt(2) erosion ratio for two perfectly correlated equal-vol strategies, and a ratio of exactly 0 for perfectly offsetting ones). VaR breach counting is checked against a synthetic window with an injected, known number of extreme-loss days. One end-to-end test runs the real book against a real disclosed historical window.
+
+## Hypothetical Stress Scenarios (`stress/hypothetical.py`)
+
+Four disclosed, illustrative multi-factor shocks (equity %, crypto %, a *relative* IV shock, optional sector overrides) — round numbers meant to span different shapes of stress, not calibrated to or claiming to predict any specific future event. Every position is fully repriced: linear for equity/crypto, a **delta+gamma+vega second-order Taylor expansion** for options — extending the gamma-only convexity check from the Greeks section to also include the vega leg, now that these scenarios define an explicit vol shock to apply it against.
+
+**A real units bug was caught and fixed building this module.** voledge's raw Black-Scholes vega is `dV/dσ` with σ in decimal (its own `greeks/analytical.py` docstring: "vega per 1.00 = 100 vol points"). Applying a scenario's vol shock correctly required converting it to an absolute decimal `d_sigma = entry_iv * vol_shock_pct` before multiplying by vega — getting this right surfaced that the Greeks section's earlier text had mislabeled `$242` as "P&L per 1-vol-point IV move," when it's actually per 100 points (\$2.42 per single point). Both the code comment and the README are now corrected, flagged inline rather than silently fixed.
+
+As of this writing (`python -m stress.run_hypothetical`):
+
+| Scenario | Full repricing P&L | Linear-only P&L (this project's usual proxy) | Convexity correction |
+|---|---|---|---|
+| Broad equity selloff (equity -20%, crypto -40%, vol +50%) | **+\$5,767** | -\$36 | +\$5,804 |
+| Crypto-specific crash (crypto -50%, equity -5%, vol +20%) | -\$784 | -\$1,149 | +\$365 |
+| Energy shock (Energy -30%, else -5%, vol +15%) | -\$5,778 | -\$6,142 | +\$364 |
+| Rate shock / Financials (Financials -20%, else -10%, vol +30%) | +\$2,604 | +\$1,151 | +\$1,453 |
+
+**Honest finding — this is the single most consequential number this project has produced, and it comes directly from combining the Greeks work with this module.** In the broad equity selloff scenario, the linear-only P&L estimate — the exact approximation `risk_measures/returns.py`'s VaR, `factor_model`'s regression, and every regime-conditional number in this project implicitly uses for the options book — predicts essentially **flat P&L (-\$36)** for a -20%/-40% crash. Full repricing shows **+\$5,767**, a swing of over \$5,800 driven almost entirely by voledge's options book (+\$5,363 of the total), which is net long gamma and long vega. That means every VaR and factor-regression number reported elsewhere in this project for a scenario of this magnitude would have gotten not just the *size* but plausibly the *sign* of the options book's contribution wrong. Stated precisely, not oversold: this \$5,800 swing is modest next to the portfolio's ~\$707k gross exposure (aggregation-layer section) — it does not mean the whole book is "saved" by its options — but it is large *relative to what the linear proxy predicted for this specific scenario*, which is exactly the point: the linear approximation isn't uniformly a little bit wrong, it can be wrong by an order of magnitude and in a specific direction depending on the scenario and the options book's actual convexity profile.
+
+The other three scenarios show smaller, still real convexity effects (all positive here, since this options book happens to be net long gamma and long vega — a book with net short gamma would show the opposite sign, larger losses than the linear proxy predicts, which is the more dangerous case in practice and worth remembering isn't what's being shown here). The energy shock scenario also does what it was built to test: alpha-signal-lab loses \$6,331 of the portfolio's \$5,778 total loss, directly confirming its real, disclosed Energy sector concentration (already flagged in the factor-decomposition section) is a genuine risk driver, not a paper concern.
+
+### Limitations
+
+- These are illustrative, disclosed judgment-call scenarios, not calibrated to any model of scenario likelihood or historical frequency — "how likely is this, really" is exactly reverse stress testing's job, future work.
+- The options book's convexity happened to be favorable (net long gamma/vega) in every scenario shown here — that is a fact about this specific book's current composition, not a general property of options books; a net-short-gamma book would show the opposite, more dangerous pattern, and nothing here should be read as "options always help in a crash."
+- Sector overrides only apply to equities (via alpha-signal-lab's sector tagging); the options book's sole underlying (SPY) always uses the broad equity shock, since SPY itself has no single sector.
+- The vol shock is relative to each option's own entry IV, not an absolute vol-point move — a disclosed modeling choice; results would differ for e.g. AMGN's very-low-baseline-vol contracts vs. one with a much higher one, since the same relative shock produces a different absolute `d_sigma` for each.
+
+### Tests
+
+`pytest` (`tests/test_hypothetical_stress.py`) — repricing is checked against constructed positions with known Greeks/market values, including hand-computing the full delta+gamma+vega Taylor expansion and confirming it matches exactly. Sector-override precedence, synthetic/unpriced-position handling, and aggregation across mixed asset classes are all checked directly. One end-to-end test runs every real scenario on the real book. 83 tests passing total across the project.

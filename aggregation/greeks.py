@@ -27,7 +27,9 @@ class PortfolioGreeks:
     net_delta_shares: float  # sum(quantity * delta) -- share-equivalent exposure
     net_delta_dollars: float  # sum(quantity * delta * spot) -- matches valuation.py's option market_value
     net_gamma_shares: float  # sum(quantity * gamma)
-    net_vega: float  # sum(quantity * vega) -- $ P&L per 1-vol-point IV move
+    net_vega: float  # sum(quantity * vega) -- $ P&L per 1.00 (100-vol-point) IV move,
+    # matching voledge's own raw vega convention (greeks/analytical.py's docstring:
+    # "vega per 1.00 = 100 vol points"); divide by 100 for $ per single vol point.
     net_theta: float  # sum(quantity * theta) -- $ P&L per day, time decay
     net_rho: float
     n_option_positions: int

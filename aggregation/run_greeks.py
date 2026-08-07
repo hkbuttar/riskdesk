@@ -20,7 +20,8 @@ def main() -> None:
     print(f"  net delta: {greeks.net_delta_shares:>10.2f} shares-equivalent  "
           f"(${greeks.net_delta_dollars:>12,.2f})")
     print(f"  net gamma: {greeks.net_gamma_shares:>10.4f} shares-equivalent per $1 underlying move")
-    print(f"  net vega:  ${greeks.net_vega:>12,.2f}  (P&L per 1-vol-point IV move)")
+    print(f"  net vega:  ${greeks.net_vega:>12,.2f}  (P&L per 1.00/100-vol-point IV move; "
+          f"${greeks.net_vega / 100:,.2f} per single vol point)")
     print(f"  net theta: ${greeks.net_theta:>12,.2f}  (P&L per day, time decay)")
     print(f"  net rho:   ${greeks.net_rho:>12,.2f}")
 
