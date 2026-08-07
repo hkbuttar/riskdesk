@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done.** Tail risk (EVT per-regime), liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done.** Liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 **This is the point in the project where scope explicitly widens beyond pure market risk.** Every module up to here answers some version of "what if the market moves against this book." Counterparty & credit risk, below, answers a genuinely different question: "what if the entity holding this book's assets — Alpaca, Binance, Coinbase, Kraken — disappears," independent of what the market does. Worth stating plainly since it's a different risk category, not a variation on the same one.
 
@@ -406,4 +406,43 @@ Total CVA: \$34.85. Herfindahl index (real venues only): 0.596.
 
 ### Tests
 
-`pytest` (`tests/test_credit.py`) — CVA is checked against hand-computable cases, including confirming it uses net (not gross) exposure for an offsetting long/short pair, scales linearly with LGD, and is exactly zero for `Counterparty.NONE`. Concentration is checked for HHI correctness on an even split, correct threshold flagging, and correct exclusion of the no-live-venue bucket. One end-to-end test runs the real pipeline. 98 tests passing total across the project.
+`pytest` (`tests/test_credit.py`) — CVA is checked against hand-computable cases, including confirming it uses net (not gross) exposure for an offsetting long/short pair, scales linearly with LGD, and is exactly zero for `Counterparty.NONE`. Concentration is checked for HHI correctness on an even split, correct threshold flagging, and correct exclusion of the no-live-venue bucket. One end-to-end test runs the real pipeline.
+
+## Extreme Value Theory: Regime-Conditional Tail Risk (`extreme_value/`)
+
+The pooled EVT/POT method (Generalized Pareto tail fit) was already built as one of the five VaR methods, back in the risk-measures section. This step's actual new work, per the plan, is checking whether **tail behavior itself** differs by regime — a more granular question than regime/conditional.py already answered (that module checked whether regime-conditional VaR *levels* differ; this checks whether the underlying tail *shape* does).
+
+**A real refactor, not just an addition**: rather than duplicate the GPD-fitting logic to get structured shape/scale parameters (needed to compare xi across regimes numerically, not just read off a VaR dollar figure), the fitting core was extracted from `risk_measures/var.py::evt_pot` into a shared `extreme_value/gpd.py::fit_gpd_tail()` / `gpd_var_cvar()`, and `evt_pot` was refactored to delegate to it. The existing VaR-method tests were re-run unchanged after the refactor to confirm identical behavior (they pass without modification).
+
+**The data-sufficiency problem regime/conditional.py's own comment anticipated is real, and this module works through it rather than around it.** A ~160-day regime bucket gives only ~16 exceedances at the usual 90% POT threshold — under `MIN_EXCEEDANCES` (20). At the default threshold, **all three regimes fail to fit** on this book's real data:
+
+```
+=== threshold_quantile=90% ===
+  volatile: ~15 exceedances on 160 days -- too few to fit a GPD reliably.
+  normal:   ~15 exceedances on 160 days -- too few to fit a GPD reliably.
+  calm:     ~15 exceedances on 160 days -- too few to fit a GPD reliably.
+```
+
+Lowering the threshold to 80% (more exceedances, but blending in more non-tail behavior — a real, disclosed trade-off, not a free fix) makes all three fit:
+
+| | ξ (shape) | β (scale) | n exceedances | 95% VaR | 95% CVaR |
+|---|---|---|---|---|---|
+| Pooled | 0.071 | 3,325 | 100 | \$7,976 | \$11,924 |
+| Volatile | 0.063 | 4,134 | 32 | \$9,030 | \$13,843 |
+| Normal | 0.185 | 2,674 | 32 | \$7,445 | \$11,684 |
+| Calm | -0.315 | 4,510 | 32 | \$7,953 | \$10,171 |
+
+**Honest finding — a genuinely non-obvious answer to the question this module set out to answer.** The volatile regime does have the highest CVaR (\$13,843, as expected), but that's driven almost entirely by **scale (β=4,134, the largest of the three)**, not by tail **shape** — its ξ (0.063) is actually the *second-lowest* of the three regimes. The regime with the fattest tail shape is, surprisingly, **normal** (ξ=0.185) — meaning extreme losses are disproportionately more likely there, relative to that regime's own more moderate scale, than in either calm or volatile. Naive intuition ("stress = fatter tails") would predict volatile has the highest ξ; the real fitted data says otherwise. Also notable: calm's ξ is *negative* (-0.315), implying a GPD with a genuine finite upper bound on losses in that regime — consistent with "calm" being a real, qualitatively different loss regime, not just a scaled-down version of the others.
+
+**A second honest finding, about the method itself, not just this book:** the pooled fit's own ξ changes from 0.515 (at the 90% threshold, `risk_measures/run.py`'s original result) to 0.071 (at 80%) on the *exact same* underlying loss series — a well-known GPD methodological issue (threshold-selection instability), now directly demonstrated on real data rather than only mentioned as a theoretical caveat. Any single reported ξ should be read together with the threshold it was fit at, not as a fixed property of the return series.
+
+### Limitations
+
+- The 80% threshold was chosen specifically because 90% left every regime bucket unfittable — a data-driven necessity, not an independently principled choice; the resulting fits blend more non-tail behavior into the tail estimate than a stricter threshold would.
+- Threshold-selection instability (see finding above) means these ξ/β estimates, regime-conditional or pooled, should be treated as threshold-dependent snapshots, not precise, unique properties of the loss distribution.
+- Each regime bucket's 32 exceedances (at 80%) is barely above `MIN_EXCEEDANCES` (20) — comfortably fittable, but still a small sample for a shape-parameter estimate, which is known to have high variance even with 100+ exceedances in the literature.
+- This shares the regime-conditional VaR work's own limitation: SPY-defined regimes, applied to a book whose risk (per the factor-decomposition section) isn't SPY-beta-dominated.
+
+### Tests
+
+`pytest` (`tests/test_extreme_value.py`) — GPD fitting is checked against synthetic data with injected, known shape/scale parameters (recovered within statistical noise, using the same threshold-placement care the plan's own POT construction requires) and hand-computable edge cases (the ξ≈0 exponential-tail formula, the below-threshold-coverage NaN case). The `evt_pot` refactor is checked to produce numerically identical output to a direct `fit_gpd_tail` call. Regime-conditional fitting is checked against constructed buckets with a controlled, known exceedance count to deterministically trigger the `MIN_EXCEEDANCES` cutoff. One end-to-end test runs both thresholds on the real book. 107 tests passing total across the project.

@@ -119,40 +119,32 @@ def cornish_fisher(
 
 
 def evt_pot(pnl_series: pd.Series, confidence: float = 0.95, threshold_quantile: float = 0.90) -> VaRResult:
-    loss = _to_loss(pnl_series).to_numpy()
-    n = len(loss)
-    u = float(np.quantile(loss, threshold_quantile))
-    exceedances = loss[loss > u] - u
-    n_u = len(exceedances)
+    from extreme_value.gpd import MIN_EXCEEDANCES, fit_gpd_tail, gpd_var_cvar
 
-    if n_u < 20:
+    loss = _to_loss(pnl_series).to_numpy()
+    fit = fit_gpd_tail(loss, threshold_quantile)
+
+    if fit is None:
+        n_u = int((loss > np.quantile(loss, threshold_quantile)).sum())
         return VaRResult(
             "evt_pot", confidence, float("nan"), float("nan"),
-            f"Only {n_u} exceedances above the {threshold_quantile:.0%} threshold -- too few to fit a GPD reliably.",
+            f"Only {n_u} exceedances above the {threshold_quantile:.0%} threshold "
+            f"(< {MIN_EXCEEDANCES}) -- too few to fit a GPD reliably.",
         )
 
-    xi, _loc, beta = stats.genpareto.fit(exceedances, floc=0)
-    tail_prob = 1 - confidence
-    coverage = n_u / n
-
-    if tail_prob >= coverage:
+    var, cvar = gpd_var_cvar(fit, confidence)
+    if var != var:  # NaN
         return VaRResult(
             "evt_pot", confidence, float("nan"), float("nan"),
             f"Requested confidence {confidence:.2%} is below the threshold's own coverage "
-            f"({1 - coverage:.2%}) -- EVT extrapolation not meaningful here; lower threshold_quantile "
-            "or raise confidence.",
+            f"({1 - fit.coverage:.2%}) -- EVT extrapolation not meaningful here; lower "
+            "threshold_quantile or raise confidence.",
         )
 
-    if abs(xi) < 1e-6:
-        var = u - beta * np.log(tail_prob / coverage)
-        cvar = var + beta
-    else:
-        var = u + (beta / xi) * ((tail_prob / coverage) ** (-xi) - 1)
-        cvar = (var + beta - xi * u) / (1 - xi) if xi < 1 else float("inf")
-
     return VaRResult(
-        "evt_pot", confidence, float(var), float(cvar),
-        f"threshold_quantile={threshold_quantile:.0%}, xi={xi:.3f}, beta={beta:.2f}, n_exceedances={n_u}",
+        "evt_pot", confidence, var, cvar,
+        f"threshold_quantile={threshold_quantile:.0%}, xi={fit.xi:.3f}, beta={fit.beta:.2f}, "
+        f"n_exceedances={fit.n_exceedances}",
     )
 
 
