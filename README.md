@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done.** Regime-conditional risk models, factor decomposition, stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done.** Factor decomposition, stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -148,7 +148,7 @@ As of this writing (`python -m correlation.run`, same 14 risk factors, 501-day w
 Two independent methods, both classifying on SPY (a broad market proxy, not this project's own portfolio P&L — a regime label should describe market conditions the book is exposed to, not be circularly defined by the book's own returns):
 
 - **`volatility_tercile.py`** — reuses execedge's own methodology directly (`data/regimes.py` in that sibling repo) rather than inventing a new regime definition: rolling realized volatility of log returns, then a **static** tercile split (`Series.quantile(1/3)` / `Series.quantile(2/3)` computed once over the whole available history — not `pd.qcut`, not a per-bar expanding recompute) labels every day `calm` / `normal` / `volatile`. Two disclosed adaptations from the original: execedge's window (24 hourly bars) and label name ("volatile", not the plan's own "stressed") are both kept as-is for genuine continuity; only the window/annualization (`window=21` trading days, `periods_per_year=252`) changed, since this project uses daily bars where execedge used hourly.
-- **`hmm_regime.py`** — the plan's "and/or a simple hidden Markov model for a probabilistic regime label instead of a hard cutoff": a 3-state Markov-switching mean/variance model (`statsmodels.tsa.regime_switching.markov_regression.MarkovRegression`) fit directly on daily log returns (not on the tercile method's already-smoothed rolling-vol series, which would double-smooth and blunt how fast a real regime change could be detected). `statsmodels` doesn't order its regimes by meaning, so the three fitted regimes are relabeled calm/normal/volatile by sorting on fitted variance ascending, matching the tercile method's ordering convention so the two are directly comparable. Output is a full daily probability distribution over all three regimes, not just a hard label. A single default-start MLE fit converged poorly on real SPY data (one regime absorbing almost no days); `search_reps=50` (multiple random restarts, keep the best) fixed this — disclosed as a real fitting issue encountered and resolved, not a hypothetical caveat.
+- **`hmm_regime.py`** — the plan's "and/or a simple hidden Markov model for a probabilistic regime label instead of a hard cutoff": a 3-state Markov-switching mean/variance model (`statsmodels.tsa.regime_switching.markov_regression.MarkovRegression`) fit directly on daily log returns (not on the tercile method's already-smoothed rolling-vol series, which would double-smooth and blunt how fast a real regime change could be detected). `statsmodels` doesn't order its regimes by meaning, so the three fitted regimes are relabeled calm/normal/volatile by sorting on fitted variance ascending, matching the tercile method's ordering convention so the two are directly comparable. Output is a full daily probability distribution over all three regimes, not just a hard label. A single default-start MLE fit converged poorly on real SPY data (one regime absorbing almost no days); `search_reps=50` (multiple random restarts, keep the best) fixed this. That introduced a second, real issue: `statsmodels`' random restarts have no seed control and occasionally land on a degenerate starting point themselves, raising a `numpy.linalg.LinAlgError` from inside the EM step rather than just fitting badly — hit directly during test runs on real SPY data, non-deterministically. Fixed with a retry ladder (`search_reps=50` → `10` → `0`, catching `LinAlgError` at each step) rather than letting one unlucky restart crash the whole classification — both issues disclosed as real fitting problems encountered and resolved, not hypothetical caveats.
 
 As of this writing (`python -m regime.run`, SPY, 2-year daily window):
 
@@ -167,4 +167,34 @@ As of this writing (`python -m regime.run`, SPY, 2-year daily window):
 
 ### Tests
 
-`pytest` (`tests/test_regime.py`) — tercile logic is checked against synthetic series with known/controllable structure (a series with clean calm/normal/volatile segments by construction). The HMM is checked on a synthetic two-regime series with a clean variance separation, where recovering the injected regime is realistic to assert exactly; the real-SPY end-to-end test only checks structural invariants (valid probability distributions, label sets), since exact regime counts on live market data would be flaky. 40 tests passing total across the project.
+`pytest` (`tests/test_regime.py`) — tercile logic is checked against synthetic series with known/controllable structure (a series with clean calm/normal/volatile segments by construction). The HMM is checked on a synthetic two-regime series with a clean variance separation, where recovering the injected regime is realistic to assert exactly; the real-SPY end-to-end test only checks structural invariants (valid probability distributions, label sets), since exact regime counts on live market data would be flaky.
+
+## Regime-Conditional Risk Models (`regime/conditional.py`)
+
+Re-estimates `risk_measures/var.py` (historical simulation, parametric, Cornish-Fisher) and `correlation/static.py` separately for each regime, instead of pooling every historical day into one static model regardless of market condition — the direct, quantified version of the question correlation.py's static-vs-DCC comparison raised only qualitatively.
+
+**Regime partition choice, disclosed:** this uses `volatility_tercile.py`'s labels, not the HMM's. The HMM's data-driven "volatile" regime had only 13 days over the 2-year window — nowhere near enough to fit a stable per-regime VaR or correlation estimate. Terciles guarantee a usable sample (~160 days) in every bucket by construction, which per-regime estimation actually needs; a regime with fewer than 30 days is skipped entirely (disclosed via a note), not forced through a method that would just be overfitting noise.
+
+As of this writing (`python -m regime.run_conditional`, 95% confidence, same 14-risk-factor book):
+
+| Method | Pooled | Calm | Normal | Volatile |
+|---|---|---|---|---|
+| Historical simulation | 7,592 | 7,964 | 6,111 | 7,601 |
+| Parametric (normal) | 8,120 | 7,432 | 8,439 | 8,605 |
+| Cornish-Fisher | 8,483 | 7,345 | 8,652 | 9,669 |
+
+**Honest finding — this book's risk is not cleanly separated by SPY's own volatility regime.** The calm-vs-volatile VaR ratio is only 1.0x–1.3x across methods, far short of a dramatic split. This is a real, useful negative result, not a null one: it means this specific aggregated book (energy-sector equities, a pairs-trade book, BTC, and SPY options) isn't dominated by broad-market beta the way SPY's own regime would predict — consistent with the aggregation-layer finding that pairtrade-lab-1's idiosyncratic pairs exposure dwarfs everything else in the book. Where the regime split shows up more clearly is in the **tail**: historical-simulation CVaR is $9,625 in the calm regime vs. $13,158 in the volatile regime (a 1.4x gap, larger than the VaR gap) — the calm regime understates deep-tail risk more than it understates the VaR threshold itself.
+
+**Correlation shift by regime** also doesn't move in the textbook direction: mean |conditional − pooled| correlation is *larger* in the calm regime (0.154) than the volatile regime (0.095). This is reported as-is rather than reinterpreted to fit the "stress increases correlation" prior — with only three ~160-day buckets from one 2-year window that never contained a real crisis, this is as plausibly sampling noise in a relatively idiosyncratic book as it is a genuine effect, and is flagged as exactly that rather than oversold as a finding.
+
+**Live-monitoring readiness:** the module also demonstrates the mechanism Step 16-equivalent live monitoring will need — classify the most recent trading day's regime, then select that regime's conditional model as "active" (falling back to the pooled model, explicitly, if the current regime doesn't have enough historical days for its own estimate, rather than silently borrowing another regime's numbers).
+
+### Limitations
+
+- This book's weak regime separation (see finding above) may be specific to its current composition (energy/financials/pairs/crypto/options), not a general statement that regime-conditioning doesn't matter — a more SPY-beta-heavy book would likely show a starker split.
+- Three ~160-day buckets from a single 2-year window is a small sample for correlation *differences* specifically (individual correlations are noisy even with ~160 points); the correlation-shift finding above is reported with that caveat attached, not smoothed over.
+- No real historical stress window is in this data yet (same limitation as correlation.py and regime/README's tercile section) — "volatile" here still means "volatile relative to a fairly calm two years."
+
+### Tests
+
+`pytest` (`tests/test_conditional.py`) — alignment/partitioning logic (no forward-fill across unlabeled dates, correct bucket membership, the min-days skip rule) is checked exactly. VaR and correlation shift-detection are checked by injecting a real, controllable regime-dependent variance/correlation difference into synthetic data and confirming the conditional estimates recover the correct direction. One end-to-end test runs the full pipeline on the real book. 47 tests passing total across the project.

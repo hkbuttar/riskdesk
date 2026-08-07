@@ -54,7 +54,22 @@ def fit_hmm_regimes(close: pd.Series, k_regimes: int = 3) -> HMMRegimeResult:
     # search_reps retries from multiple random starting points and keeps the
     # best, which is what actually gets a converged, well-identified fit
     # rather than a fit() call that merely returns without raising.
-    res = model.fit(search_reps=50, maxiter=1000)
+    # statsmodels' random restarts have no seed control and can themselves
+    # land on a degenerate starting point (a regime's variance collapsing
+    # toward zero), which raises a numpy LinAlgError from deep inside the
+    # EM step rather than just fitting badly -- observed directly on real
+    # SPY data. Retried with progressively fewer restarts rather than
+    # letting a single unlucky restart crash the whole classification.
+    fit_notes = []
+    res = None
+    for reps in (50, 10, 0):
+        try:
+            res = model.fit(search_reps=reps, maxiter=1000) if reps else model.fit(maxiter=1000)
+            break
+        except np.linalg.LinAlgError as exc:
+            fit_notes.append(f"search_reps={reps} hit {type(exc).__name__}, retrying with fewer restarts.")
+    if res is None:
+        raise RuntimeError("MarkovRegression fit failed even at search_reps=0.")
 
     variances = [res.params[f"sigma2[{i}]"] for i in range(k_regimes)]
     means = [res.params[f"const[{i}]"] for i in range(k_regimes)]
@@ -70,9 +85,13 @@ def fit_hmm_regimes(close: pd.Series, k_regimes: int = 3) -> HMMRegimeResult:
         for i in range(k_regimes)
     }
 
+    notes = f"MarkovRegression(k_regimes={k_regimes}, switching_variance=True), n={len(log_returns)}"
+    if fit_notes:
+        notes += " | " + " ".join(fit_notes)
+
     return HMMRegimeResult(
         probabilities=probs,
         hard_labels=hard_labels,
         regime_params=regime_params,
-        notes=f"MarkovRegression(k_regimes={k_regimes}, switching_variance=True), n={len(log_returns)}",
+        notes=notes,
     )
