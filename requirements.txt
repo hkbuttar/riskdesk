@@ -13,3 +13,4 @@ pyarrow
 python-dotenv
 yfinance
 pytest
+httpx

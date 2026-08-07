@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done. Liquidity-adjusted risk & concentration — done. P&L attribution — done. Live risk monitoring — done.** All risk-analytics modules are now built. Backend and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done. Extreme value theory / regime-conditional tail risk — done. Liquidity-adjusted risk & concentration — done. P&L attribution — done. Live risk monitoring — done. VaR backtesting (statistical rigor) — done.** A FastAPI backend has been scaffolded (`backend/`) but not yet wired up/tested end-to-end. Frontend and deployment are not yet started.
 
 **This is the point in the project where scope explicitly widens beyond pure market risk.** Every module up to here answers some version of "what if the market moves against this book." Counterparty & credit risk, below, answers a genuinely different question: "what if the entity holding this book's assets — Alpaca, Binance, Coinbase, Kraken — disappears," independent of what the market does. Worth stating plainly since it's a different risk category, not a variation on the same one.
 
@@ -540,4 +540,37 @@ Reset persists correctly across separate invocations (verified directly, not jus
 
 ### Tests
 
-`pytest` (`tests/test_monitor.py`) — the kill-switch state machine is checked directly for manual-reset-only semantics (stays triggered after the breach clears, does not duplicate reasons across repeated checks) and for persistence surviving separate load/save cycles (simulating separate process invocations, not just an in-memory round-trip). Limit checks are checked against hand-computable breach/no-breach cases. One end-to-end test runs the real live-check pipeline with kill-switch persistence isolated to a temp path, so the test suite never mutates the real `monitor/state.json`. 138 tests passing total across the project.
+`pytest` (`tests/test_monitor.py`) — the kill-switch state machine is checked directly for manual-reset-only semantics (stays triggered after the breach clears, does not duplicate reasons across repeated checks) and for persistence surviving separate load/save cycles (simulating separate process invocations, not just an in-memory round-trip). Limit checks are checked against hand-computable breach/no-breach cases. One end-to-end test runs the real live-check pipeline with kill-switch persistence isolated to a temp path, so the test suite never mutates the real `monitor/state.json`.
+
+## VaR Backtesting / Statistical Rigor (`risk_measures/backtesting.py`)
+
+Kupiec's Proportion-of-Failures (POF) test and Christoffersen's independence test — the standard pair for asking "is this VaR model actually calibrated" with an actual hypothesis test and p-value attached, not an eyeballed breach count. Run for both the pooled model and a regime-conditional model (whichever regime's VaR applies on a given day — the same day-by-day selection logic `monitor/live.py` uses live) over the *same* evaluation period, so "does regime-conditioning improve calibration" gets a direct, quantified answer.
+
+- **Kupiec POF**: does the observed breach *rate* match the expected rate (`1 - confidence`)?
+- **Christoffersen independence**: even a correctly-rated VaR can be badly calibrated if breaches *cluster* in time rather than scattering independently — this tests specifically for that, via a first-order Markov chain on the breach indicator series.
+- **Combined test**: `LR_pof + LR_ind`, chi-squared with 2 degrees of freedom — the real bar a well-calibrated model needs to clear (correct rate *and* no clustering).
+
+**A real methodological nuance surfaced running this, disclosed rather than smoothed over:** the pooled model's Kupiec result is close to **tautological** in-sample. `historical_simulation`'s VaR *is* the empirical quantile of the same series the breach rate is then measured against — so of course a 95th-percentile threshold breaches ~5% of that same sample; that's what a quantile *is*, not independent evidence of good calibration. The regime-conditional model's breach rate is a more genuine test, since it isn't reading off one static quantile — it's a day-by-day mix of different regime-specific VaRs that has no guarantee of landing near 5% just by construction. The Christoffersen independence test is meaningful for both models regardless (clustering isn't guaranteed away by either construction), and is where the real comparison lives.
+
+As of this writing (`python -m risk_measures.run_backtest`, 95% confidence, 500 days):
+
+| | Breaches | Kupiec p | Christoffersen p | Combined p | Well-calibrated? |
+|---|---|---|---|---|---|
+| Pooled | 25 (5.00%, near-tautological — see above) | 1.000 | 0.514 | 0.808 | Yes |
+| Regime-conditional | 24 (4.80%) | 0.836 | 0.449 | 0.735 | Yes |
+
+**Honest finding — a third, now formally statistically-tested confirmation of a theme already threaded through this project.** Both models pass (fail to reject the null of correct calibration), but the regime-conditional model's combined p-value (0.735) is actually *lower* than the pooled model's (0.808) — regime-conditioning did not improve calibration by this test, on this book, over this window. This lines up directly with the historical-replay section's own finding (regime-conditioning provided no edge in the COVID window, and was overly conservative in the 2022 window) and the regime-conditional-VaR section's finding (this book's risk isn't cleanly separated by SPY's own volatility regime) — three independent methodologies now agreeing that regime-conditioning's value, for this specific book, is genuinely mixed rather than a reliable improvement, not a result to be talked around.
+
+### Limitations
+
+- This is an **in-sample** calibration check — VaR is estimated once over the same 2-year window the breaches are counted against, not a rolling/expanding walk-forward backtest (which would need a fresh re-fit every single day, computationally far more expensive). `stress/historical.py`'s VaR-breach validation is this project's genuinely out-of-sample complement (fit on pre-window data only, tested against a real crisis window); this module is the formal statistical test the plan calls for, not a replacement for that check.
+- The pooled model's Kupiec result specifically should be read with the tautology caveat above front and center — it is expected to look well-calibrated by construction, not because the underlying VaR methodology is validated.
+- 500 days gives only ~25 breaches at 95% confidence — a small sample for a hypothesis test; the combined test's power to actually detect real miscalibration at this sample size is limited, a real statistical constraint, not a modeling choice.
+
+### Tests
+
+`pytest` (`tests/test_backtesting.py`) — Kupiec is checked against an exactly-calibrated synthetic series (near-zero LR) and a grossly miscalibrated one (large LR, reject), plus zero- and all-breach edge cases that would otherwise hit `log(0)`. Christoffersen is checked against a deliberately clustered breach series (rejects independence) vs. a scattered one with the identical total breach count (does not reject), and against a genuinely IID series (does not reject). The pooled breach series' near-tautological property is checked and documented directly as a test, not just prose. One end-to-end test runs the full pipeline on the real book. 148 tests passing total across the project.
+
+## Backend (`backend/`) — scaffolded, not yet verified
+
+A FastAPI app (`backend/main.py`) has been written with one endpoint per risk-analytics module above, plus a JSON-serialization helper (`backend/serialize.py`) that converts every module's real return types (dataclasses, pandas Series/DataFrames, numpy scalars) into JSON-safe structures in one place, rather than coupling each module's own return type to what an eventual API needs. CORS follows alpha-signal-lab's own established `ALLOWED_ORIGINS` pattern exactly. **This has not yet been run or tested** — it's mid-build, written but unverified, and is flagged here rather than presented as done. Verifying it (starting the server, hitting every endpoint, adding route tests) is the immediate next step before this section can honestly say "done."
