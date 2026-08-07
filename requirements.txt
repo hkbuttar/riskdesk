@@ -1,0 +1,14 @@
+numpy
+pandas
+scipy
+statsmodels
+arch
+scikit-learn
+cvxpy
+fastapi
+uvicorn[standard]
+pydantic
+psycopg[binary]
+pyarrow
+python-dotenv
+pytest
