@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done.** Stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done.** Hypothetical stress scenarios, reverse stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -270,4 +270,40 @@ As of this writing (`python -m aggregation.run_greeks`, 20 real option positions
 
 ### Tests
 
-`pytest` (`tests/test_greeks.py`) — Greek aggregation is checked against constructed positions with known values (exact hand-computable sums). Convexity is checked for the textbook properties directly: zero gamma collapses quadratic to linear exactly, the correction scales with the square of the move size, and positive/negative gamma add/subtract value symmetrically in both directions. One end-to-end test runs on the real book. 64 tests passing total across the project.
+`pytest` (`tests/test_greeks.py`) — Greek aggregation is checked against constructed positions with known values (exact hand-computable sums). Convexity is checked for the textbook properties directly: zero gamma collapses quadratic to linear exactly, the correction scales with the square of the move size, and positive/negative gamma add/subtract value symmetrically in both directions. One end-to-end test runs on the real book.
+
+## Historical Scenario Replay (`stress/historical.py`)
+
+Applies real historical return windows to TODAY's actual position sizes — the same hypothetical-historical-P&L methodology `risk_measures/returns.py` already uses for VaR, narrowed to three specific, disclosed crisis windows instead of a rolling 2-year lookback. This is also where two "future work" callouts from earlier sections finally get resolved: correlation.py's and regime/conditional.py's own limitations both explicitly said "validating this against a real historical stress window is future work" — this module is that validation.
+
+**Windows, disclosed judgment calls:**
+- **COVID crash**: 2020-02-19 (S&P 500 pre-crash high) to 2020-03-23 (closing low).
+- **2022 rate-hike bear market**: 2022-01-03 (2022 opening high) to 2022-10-12 (closing low) — a slower, longer drawdown, deliberately contrasted against COVID's sharp shock.
+- **FTX collapse**: 2022-11-06 (the CoinDesk report that triggered the run) to 2022-11-14 — crypto-specific, not broad-equity.
+
+**Lookahead discipline**: the VaR-breach validation below fits both the pooled and volatile-regime-conditional models *only* on data strictly before each window starts (`pre_start` dates going back to 2018/2019) — "would a model estimated from what was known before the crisis have bounded the crisis's actual losses," not "does a model fit on the crisis predict the crisis."
+
+As of this writing (`python -m stress.run_historical`):
+
+| Window | Total P&L | Worst day | Diversification erosion ratio | Pooled VaR breaches | Conditional VaR breaches |
+|---|---|---|---|---|---|
+| COVID crash (23 days) | +\$9,185 (+1.3%) | -\$19,301 | 0.97 | 6 (expected ~1.2) | 6 (expected ~1.2) |
+| 2022 rate-hike (195 days) | +\$14,087 (+2.0%) | -\$26,722 | 1.00 | 8 (expected ~9.8) | 2 (expected ~9.8) |
+| FTX collapse (4 days) | -\$15,977 (-2.3%) | -\$7,198 | 1.00 | 0 (expected ~0.2) | 0 (expected ~0.2) |
+
+**Honest finding #1 — the portfolio's realized P&L is not a simple story, and it's driven by whichever strategy happens to have offsetting exposure, not genuine hedging design.** The book made money in both the COVID crash and the 2022 bear market — during COVID because pairtrade-lab-1's AXP/WFC pair gained \$24,228 while alpha-signal-lab lost \$13,426 (mostly offsetting, by coincidence of current position sizing, not by any strategy being designed to hedge another); during 2022, alpha-signal-lab actually profited (+\$19,858), plausibly because its live book currently holds short positions in AVGO/INTC/NVDA, and 2022 was a brutal year for exactly those names. The one window where the book actually lost money — FTX — is dominated almost entirely by pairtrade-lab-1 (-\$14,470 of the -\$15,977 total), not by bookmaker or any other crypto-touching strategy, because pairtrade-lab-1's stand-in position sizing happens to be far larger than everything else in the book (the same capital-base mismatch flagged back in the aggregation-layer README section).
+
+**Honest finding #2 — regime-conditioning does NOT uniformly help, and this module reports that plainly rather than only showcasing wins.** Three different outcomes across three windows: in the COVID window, the volatile-regime-conditional VaR was breached exactly as often as the pooled model (6 of 23 days each) — a regime classifier fit on pre-2020 "volatile" days had never seen anything like COVID, so conditioning on it provided no edge for a genuinely novel shock. In the 2022 window, the pooled model was already reasonably well-calibrated (8 breaches vs. ~9.8 expected) while the conditional model was *overly* conservative (a much higher VaR, only 2 breaches — under-breaching, meaning it overstated risk for that window). Only the FTX window is too short (4 days) to draw any real conclusion either way. The honest summary: regime-conditioning is not a free upgrade over pooled VaR — its value depends on whether the crisis at hand resembles the "volatile" days the regime model was actually trained on, which is a real, disclosed limitation of the whole regime-conditional approach, not something the pooled-vs-conditional comparison in the regime/ section could show on its own without this out-of-sample test.
+
+**Diversification erosion** stayed close to 1.0 in every window (0.97–1.00) — cross-strategy correlation neither meaningfully amplified nor reduced portfolio risk relative to a naive independence assumption during these three specific historical windows, for this specific book. This is a real, if modest, finding: it does not confirm the "diversification breaks down under stress" narrative that motivated the DCC-GARCH work — at least not for this book, in these three windows.
+
+### Limitations
+
+- Three windows, one small book — none of these findings generalize to "regime-conditioning helps/doesn't help" as a universal statement; they're specific, honest results for this specific aggregated book's current position sizing.
+- The FTX window (4 trading days) is too short for any of the statistical comparisons (breach counts, diversification ratio) to be meaningful — reported anyway for completeness, with the limitation stated directly next to the numbers rather than omitted.
+- "Hypothetical P&L" here means today's position sizes applied to historical returns — it is explicitly not a claim about what any of these strategies actually earned or lost in real history, several of which (bookmaker, pairtrade-lab-1, voledge) weren't even running as currently configured back in 2020–2022.
+- The regime classifier used for the VaR-breach validation is refit fresh on each window's own pre-window data (not reusing the "current" 2-year classifier from the regime/ section) — a deliberately different, out-of-sample-correct classifier instance, disclosed so the two aren't confused for the same fitted model.
+
+### Tests
+
+`pytest` (`tests/test_historical_stress.py`) — replay math and the diversification-erosion ratio are checked against constructed positions/price series with exact hand-computable expected values (including the textbook sqrt(2) erosion ratio for two perfectly correlated equal-vol strategies, and a ratio of exactly 0 for perfectly offsetting ones). VaR breach counting is checked against a synthetic window with an injected, known number of extreme-loss days. One end-to-end test runs the real book against a real disclosed historical window. 73 tests passing total across the project.
