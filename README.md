@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done.** Regime models, factor decomposition, stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done.** Regime-conditional risk models, factor decomposition, stress testing, credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
 
 ## Environment & Data Acquisition
 
@@ -141,4 +141,30 @@ As of this writing (`python -m correlation.run`, same 14 risk factors, 501-day w
 
 ### Tests
 
-`pytest` (`tests/test_correlation.py`) — static correlation and Ledoit-Wolf are checked against synthetic data with known structure (a specific injected correlation, a deliberately ill-conditioned small sample). DCC-GARCH is checked for well-formedness (valid correlation matrices, the stationarity constraint honored) and, via a synthetic calm-then-correlated regime switch, for correctly tracking the *direction* of a real correlation change that a static estimate cannot see. One end-to-end test runs DCC-GARCH on the real book. 32 tests passing total across the project.
+`pytest` (`tests/test_correlation.py`) — static correlation and Ledoit-Wolf are checked against synthetic data with known structure (a specific injected correlation, a deliberately ill-conditioned small sample). DCC-GARCH is checked for well-formedness (valid correlation matrices, the stationarity constraint honored) and, via a synthetic calm-then-correlated regime switch, for correctly tracking the *direction* of a real correlation change that a static estimate cannot see. One end-to-end test runs DCC-GARCH on the real book.
+
+## Regime Classification (`regime/`)
+
+Two independent methods, both classifying on SPY (a broad market proxy, not this project's own portfolio P&L — a regime label should describe market conditions the book is exposed to, not be circularly defined by the book's own returns):
+
+- **`volatility_tercile.py`** — reuses execedge's own methodology directly (`data/regimes.py` in that sibling repo) rather than inventing a new regime definition: rolling realized volatility of log returns, then a **static** tercile split (`Series.quantile(1/3)` / `Series.quantile(2/3)` computed once over the whole available history — not `pd.qcut`, not a per-bar expanding recompute) labels every day `calm` / `normal` / `volatile`. Two disclosed adaptations from the original: execedge's window (24 hourly bars) and label name ("volatile", not the plan's own "stressed") are both kept as-is for genuine continuity; only the window/annualization (`window=21` trading days, `periods_per_year=252`) changed, since this project uses daily bars where execedge used hourly.
+- **`hmm_regime.py`** — the plan's "and/or a simple hidden Markov model for a probabilistic regime label instead of a hard cutoff": a 3-state Markov-switching mean/variance model (`statsmodels.tsa.regime_switching.markov_regression.MarkovRegression`) fit directly on daily log returns (not on the tercile method's already-smoothed rolling-vol series, which would double-smooth and blunt how fast a real regime change could be detected). `statsmodels` doesn't order its regimes by meaning, so the three fitted regimes are relabeled calm/normal/volatile by sorting on fitted variance ascending, matching the tercile method's ordering convention so the two are directly comparable. Output is a full daily probability distribution over all three regimes, not just a hard label. A single default-start MLE fit converged poorly on real SPY data (one regime absorbing almost no days); `search_reps=50` (multiple random restarts, keep the best) fixed this — disclosed as a real fitting issue encountered and resolved, not a hypothetical caveat.
+
+As of this writing (`python -m regime.run`, SPY, 2-year daily window):
+
+| | calm | normal | volatile |
+|---|---|---|---|
+| Tercile (by construction) | 161 (32%) | 159 (32%) | 161 (32%) |
+| HMM (data-driven) | 317 (63%) | 171 (34%) | 13 (3%) |
+
+**Honest finding:** the two methods agree on only 43.2% of days. This isn't a bug in either — it's a real, structural difference in what each method is built to do. Terciles force an exactly-balanced three-way split by construction, regardless of whether the underlying volatility distribution actually clusters that way. The HMM has no such constraint: it found volatility on SPY over this window is genuinely dominated by a low-variance regime (63% of days), with true high-variance days rare (3%) and sharply distinguished (fitted volatile-regime variance is ~13x the calm regime's, with a negative mean return, a classic risk-off signature) rather than evenly spread across a forced middle third. Which one is "right" depends on what the classification is for — terciles guarantee enough samples in every bucket for later per-regime statistics; the HMM better reflects the market's actual clustering, at the cost of a genuinely rare "volatile" bucket that may not have enough days for reliable regime-conditional statistics downstream.
+
+### Limitations
+
+- Validating either method against a real, known stress period (e.g. a sharp historical drawdown) is future work once historical-scenario-replay exists — right now both are fit on a 2-year window that never contained a genuine crisis, so "volatile" here means "volatile relative to a fairly calm two years," not "crisis-level."
+- The HMM's rare volatile regime (13 of 501 days) may not carry enough observations for stable regime-conditional risk estimates later — a real, disclosed tension between the two methods' designs, not resolved by picking one over the other here.
+- Both methods classify the market via SPY alone; a book with material crypto or options exposure (as this one has) may experience regime shifts SPY doesn't capture — a single reference series is a disclosed simplification.
+
+### Tests
+
+`pytest` (`tests/test_regime.py`) — tercile logic is checked against synthetic series with known/controllable structure (a series with clean calm/normal/volatile segments by construction). The HMM is checked on a synthetic two-regime series with a clean variance separation, where recovering the injected regime is realistic to assert exactly; the real-SPY end-to-end test only checks structural invariants (valid probability distributions, label sets), since exact regime counts on live market data would be flaky. 40 tests passing total across the project.
