@@ -3,7 +3,9 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done.** Credit risk, tail risk, liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+**Environment & data acquisition — done. Position & exposure aggregation — done. VaR/CVaR risk measures — done. Correlation & covariance estimation — done. Regime classification — done. Regime-conditional risk models — done. Factor risk decomposition — done. Greeks & options risk aggregation — done. Historical scenario replay — done. Hypothetical stress scenarios — done. Reverse stress testing — done. Counterparty & credit risk — done.** Tail risk (EVT per-regime), liquidity, attribution, live monitoring, backend, and frontend are not yet started.
+
+**This is the point in the project where scope explicitly widens beyond pure market risk.** Every module up to here answers some version of "what if the market moves against this book." Counterparty & credit risk, below, answers a genuinely different question: "what if the entity holding this book's assets — Alpaca, Binance, Coinbase, Kraken — disappears," independent of what the market does. Worth stating plainly since it's a different risk category, not a variation on the same one.
 
 ## Environment & Data Acquisition
 
@@ -371,4 +373,37 @@ As of this writing (`python -m reverse_stress.run`, portfolio factor model R²=0
 
 ### Tests
 
-`pytest` (`tests/test_reverse_stress.py`) — the optimizer's `cvxpy` solution is checked against an independently-computed closed-form solution (the minimum-Mahalanobis-distance-subject-to-a-linear-constraint problem has a known Lagrangian closed form) and against exact constraint satisfaction. Mahalanobis distance is checked against a hand-computable diagonal-covariance case. One end-to-end test runs the full pipeline on the real book. 89 tests passing total across the project.
+`pytest` (`tests/test_reverse_stress.py`) — the optimizer's `cvxpy` solution is checked against an independently-computed closed-form solution (the minimum-Mahalanobis-distance-subject-to-a-linear-constraint problem has a known Lagrangian closed form) and against exact constraint satisfaction. Mahalanobis distance is checked against a hand-computable diagonal-covariance case. One end-to-end test runs the full pipeline on the real book.
+
+## Counterparty & Credit Risk (`credit/`)
+
+PD tiers (`credit/counterparty.py`) were built back in the environment/data-acquisition phase — disclosed, literature-informed default-probability tiers per counterparty (Alpaca as a regulated broker-dealer at the low end; Binance/Kraken as less-regulated offshore exchanges at the high end; Coinbase in between), since no live credit-spread data exists for any of these. This section adds the rest: exposure by venue (reusing `aggregation/rollup.py::by_counterparty` directly), a simplified CVA, and concentration flagging.
+
+**Scoping distinction, stated precisely:** "CVA" in derivatives pricing usually means a bilateral swap counterparty's time-varying expected exposure, discounted over a trade's life. What's actually relevant here is closer to **custodial/settlement counterparty risk** — the risk that a broker or exchange holding this project's assets becomes insolvent (the FTX scenario, already replayed as a real historical window). This module reuses the term "CVA" because that's the plan's own framing and the underlying formula is the same shape (`Exposure × PD × LGD`), but the exposure measure is a static current position, not a discounted expected-exposure profile — disclosed rather than left to look more sophisticated than it is.
+
+- **Exposure measure**: `|net exposure|` per counterparty, not gross — in a custodial default, an offsetting long/short pair at the same broker nets to one account value, so gross would overstate what's actually at risk. A disclosed simplification (real custody/margin arrangements can be more complex), not a claim about actual legal recovery mechanics.
+- **LGD (loss given default)**: a single disclosed assumption, 60% (a common simplified Basel-style figure for unsecured exposure), applied uniformly — not because 60% is precisely right for a crypto exchange vs. a regulated broker-dealer specifically, but because inventing a per-counterparty recovery rate with no supporting data would sound more precise without being more accurate.
+- **Concentration**: computed only among counterparties with a real, non-zero PD — `Counterparty.NONE` (positions with no live venue, e.g. yfinance-sourced backtest data) is excluded, since there's no real venue to be concentrated in for a position that isn't actually held anywhere.
+
+As of this writing (`python -m credit.run`):
+
+| Counterparty | Net exposure | PD tier | CVA | Share of real-venue exposure |
+|---|---|---|---|---|
+| Alpaca | \$1,115 | regulated broker-dealer, 0.10% | \$0.67 | 28.1% |
+| Binance | \$2,849 | offshore exchange, 2.00% | \$34.18 | **71.9% — flagged** |
+| (no live venue) | \$6,636 | n/a, PD=0 | \$0.00 | excluded |
+
+Total CVA: \$34.85. Herfindahl index (real venues only): 0.596.
+
+**Honest finding:** Binance is flagged at 71.9% of real-venue exposure — technically correct and a real concentration signal (HHI 0.596, well above the 0.5 threshold), but it needs its own caveat stated immediately, not left for a reader to discover: **this concentration finding currently applies to only \$3,964 of real-venue exposure**, against a book with \$654,842 of gross exposure tagged `Counterparty.NONE` (no live venue). That's not a gap in the concentration math — it's an accurate reflection of where this project actually stands: only alpha-signal-lab (Alpaca) and bookmaker's `binance_real` run (Binance) currently carry a real counterparty tag; pairtrade-lab-1 and voledge's disclosed stand-ins were generated from data sources (cached prices, a live options chain) with no live trading venue attached, so `Counterparty.NONE` is the correct, honest tag for them — not a placeholder that should be "fixed." The concentration finding is real but narrow in scope right now, and both facts are stated together rather than one implying the other.
+
+### Limitations
+
+- The concentration/CVA figures only cover the ~\$3,964 of currently-tagged real-venue exposure (see finding above) — they will become more representative of the whole book's true counterparty risk as more connectors' stand-ins are regenerated against live-venue data, not as a fix to this module.
+- LGD is a single uniform assumption across very different counterparty types (a regulated US broker-dealer vs. an offshore exchange) — a more refined model would assign a different, still-disclosed LGD per counterparty type, not implemented here.
+- Net (not gross) exposure as the CVA/concentration base is a disclosed simplification of real custody/margin mechanics, which can differ meaningfully by jurisdiction and by venue (e.g. per-asset segregation rules) — not modeled here.
+- PD tiers themselves remain assumption-based, not market-implied (see the environment/data-acquisition section) — CVA numbers here inherit that same limitation directly.
+
+### Tests
+
+`pytest` (`tests/test_credit.py`) — CVA is checked against hand-computable cases, including confirming it uses net (not gross) exposure for an offsetting long/short pair, scales linearly with LGD, and is exactly zero for `Counterparty.NONE`. Concentration is checked for HHI correctness on an even split, correct threshold flagging, and correct exclusion of the no-live-venue bucket. One end-to-end test runs the real pipeline. 98 tests passing total across the project.
