@@ -6,7 +6,13 @@ title: Live risk monitor
 import {card, money} from "./components.js";
 const fallbackBase = "http://127.0.0.1:8000";
 const apiBase = globalThis.RISKDESK_API_URL ?? fallbackBase;
+```
+
+```js
 const refresh = view(Inputs.button("Refresh live risk", {value: 0, reduce: value => value + 1}));
+```
+
+```js
 const status = await fetch(`${apiBase}/api/monitor?refresh=${refresh}`, {cache: "no-store"})
   .then(r => {if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json();})
   .catch(error => ({error: error.message}));

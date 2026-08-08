@@ -4,13 +4,22 @@ title: Correlation
 
 ```js
 import {matrixRows, warning} from "./components.js";
-const snapshot = FileAttachment("data/riskdesk.json").json();
+const snapshot = await FileAttachment("data/riskdesk.json").json();
 const history = snapshot.dcc?.correlation_history ?? [];
 const dates = snapshot.dcc?.dates ?? [];
 const tickers = snapshot.dcc?.tickers ?? [];
 const lastIndex = Math.max(0, history.length - 1);
+```
+
+```js
+// Inputs live in their own cell -- a view() binding read in the same cell
+// where it's created can be undefined on first run (Observable's reactive
+// graph only guarantees a resolved value for DOWNSTREAM cells).
 const model = view(Inputs.radio(["Static", "DCC-GARCH through time"], {label: "Estimator", value: "Static"}));
 const timeIndex = view(Inputs.range([0, lastIndex], {label: "DCC date / stress-window slider", value: lastIndex, step: 1}));
+```
+
+```js
 const historyMatrix = history[timeIndex]
   ? Object.fromEntries(tickers.map((row, i) => [row, Object.fromEntries(tickers.map((column, j) => [column, history[timeIndex][i][j]]))]))
   : snapshot.dcc?.latest_correlation;
@@ -32,14 +41,18 @@ display(html`<div class="risk-card"><div class="risk-label">Selected DCC observa
 ```
 
 ```js
-display(warning(snapshot));
-Plot.plot({height: 520, marginLeft: 90, x: {label: null}, y: {label: null}, color: {type: "diverging", domain: [-1, 1], scheme: "RdBu", legend: true}, marks: [Plot.cell(cells, {x: "column", y: "row", fill: "value", inset: 1, tip: true}), Plot.text(cells, {x: "column", y: "row", text: d => d.value?.toFixed(2), fill: d => Math.abs(d.value) > .55 ? "white" : "currentColor"})]})
+const snapshotWarning = warning(snapshot);
+if (snapshotWarning) display(snapshotWarning);
+display(Plot.plot({height: 520, marginLeft: 90, x: {label: null}, y: {label: null}, color: {type: "diverging", domain: [-1, 1], scheme: "RdBu", legend: true}, marks: [Plot.cell(cells, {x: "column", y: "row", fill: "value", inset: 1, tip: true}), Plot.text(cells, {x: "column", y: "row", text: d => d.value?.toFixed(2), fill: d => Math.abs(d.value) > .55 ? "white" : "currentColor"})]}));
 ```
 
 ## Regime-conditional matrices
 
 ```js
 const conditionalRegime = view(Inputs.select(Object.keys(snapshot.conditional?.conditional_correlation ?? {}), {label: "Regime"}));
+```
+
+```js
 const conditionalCells = matrixRows(snapshot.conditional?.conditional_correlation?.[conditionalRegime]);
-Plot.plot({height: 420, marginLeft: 90, color: {type: "diverging", domain: [-1, 1], scheme: "RdBu"}, marks: [Plot.cell(conditionalCells, {x: "column", y: "row", fill: "value", tip: true})]})
+display(Plot.plot({height: 420, marginLeft: 90, color: {type: "diverging", domain: [-1, 1], scheme: "RdBu"}, marks: [Plot.cell(conditionalCells, {x: "column", y: "row", fill: "value", tip: true})]}));
 ```

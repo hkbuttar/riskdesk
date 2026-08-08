@@ -3,7 +3,7 @@ Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlatio
 
 ## Status
 
-**Steps 1–21 are implemented** — the full risk-analytics layer, tested FastAPI backend, and Observable Framework frontend. Production deployment is the remaining step.
+**Steps 1–21 are implemented** — the full risk-analytics layer, tested FastAPI backend, and Observable Framework frontend. Deployment configuration (`render.yaml`, `frontend/vercel.json`) is written and verified locally (see the Deployment section below — the deployed-instance data pipeline was actually run end-to-end with zero local filesystem access, not just configured); an actual Render/Vercel deploy hasn't been triggered yet.
 
 **`notebooks/research.ipynb`** is an interactive companion covering the same key findings below — every cell calls this project's real modules against real, live-fetched data (no separate, simplified reimplementation), and is executed end-to-end (`jupyter nbconvert --execute`) so its saved outputs are genuine current results, not placeholder code. Re-running it will regenerate fresh numbers, since the underlying data (live positions, current prices, current regime) changes day to day.
 
@@ -672,7 +672,7 @@ Interactive documentation is available at `/docs`, the OpenAPI contract at `/ope
 
 ## Frontend (`frontend/`)
 
-The Observable Framework site implements all ten Step 21 views: portfolio overview, VaR comparison with regime control, static/DCC and regime-conditional correlation, factors/PCA, historical and hypothetical stress, interactive reverse stress, counterparty/CVA, EVT and liquidity, attribution, and the live risk monitor. Slow analytics are captured by a build-time FastAPI data loader; live monitoring and non-default reverse-stress targets use runtime requests. If the API is unavailable during a static build, the site builds with an explicit unavailable-data state rather than publishing fabricated values.
+The Observable Framework site implements all ten views: portfolio overview, VaR comparison with regime control, static/DCC and regime-conditional correlation (with a stress-window time slider), factors/PCA, historical and hypothetical stress, interactive reverse stress, counterparty/CVA, EVT and liquidity, attribution, and the live risk monitor. Slow analytics are captured by a build-time FastAPI data loader; live monitoring and non-default reverse-stress targets use runtime requests. If the API is unavailable during a static build, the site builds with an explicit unavailable-data state rather than publishing fabricated values.
 
 ```bash
 python scripts/dev.py
@@ -680,4 +680,21 @@ python scripts/dev.py
 
 This starts—or reuses—FastAPI at `http://127.0.0.1:8000`, waits for its health probe, and starts Observable at `http://127.0.0.1:3000` with the API URL and CORS origin connected. The site header reports `API CONNECTED`, `API DEGRADED`, or `API OFFLINE` using the real backend health endpoint.
 
-For production, set `RISKDESK_API_URL` to the Render backend URL in Vercel and set backend `ALLOWED_ORIGINS` to the Vercel site URL. `frontend/vercel.json` declares the static `dist` output; deployment itself is Step 22.
+## Deployment
+
+Backend on Render, frontend on Vercel, the same cross-service split every other project in this portfolio uses.
+
+**Backend (`render.yaml`)** — matches alpha-signal-lab's own `render.yaml` convention exactly (single Python web service, `uvicorn` start command, `PYTHON_VERSION` pinned). The one thing genuinely specific to this project: a deployed instance has **no local filesystem access to the six sibling repos at all** — there is no sibling checkout on a Render server. Every value `connectors/_env.py` would otherwise read from a sibling repo's own local `.env` file has to be supplied directly as an environment variable instead, using the `{REPO_SLUG}_{KEY}` override convention `_env.py` implements for exactly this reason (e.g. `ALPHA_SIGNAL_LAB_DATABASE_URL` overrides what would locally come from `alpha-signal-lab/.env`'s own `DATABASE_URL`). Required env vars, all `sync: false` in `render.yaml` (entered once in Render's dashboard, never committed):
+
+| Variable | Source | Powers |
+|---|---|---|
+| `ALLOWED_ORIGINS` | the Vercel frontend's URL, once deployed | CORS |
+| `ALPHA_SIGNAL_LAB_DATABASE_URL` | alpha-signal-lab's own Render Postgres connection string | live positions (10 of this book's 33) |
+| `STREAMALPHA_DATABASE_URL` | streamalpha's own Render Postgres connection string | anomaly signals (no positions, by design) |
+| `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` | alpha-signal-lab's Alpaca paper account (reused directly, same account this whole portfolio already shares locally) | every risk-factor price/volume fetch across the entire project |
+
+**Verified, not assumed**: with `RISKDESK_SIBLINGS_ROOT` pointed at a nonexistent path (simulating exactly what a Render instance sees — zero local sibling access) and only those four env vars set, `python -m connectors.registry` reproduces the identical 33-position aggregated book, and `python -m risk_measures.run` computes real VaR across all five methods — both confirmed by actually running them this way, not inferred.
+
+**A real, disclosed limitation of the deployed instance**: bookmaker (local SQLite), execedge (local files), pairtrade-lab-1, and voledge (both backtest-only) have no remotely-reachable live data source at all. Their connectors fall back to the committed stand-in snapshots under `connectors/standins/` — already part of this repo, no env vars needed — including a new one generated specifically for this (`bookmaker_positions.json`, bookmaker's real `binance_real` run, since its SQLite file is exactly as unreachable from Render as it is from any other machine that isn't this one). These snapshots are frozen at generation time on a deployed instance; regenerating them still requires running the corresponding script locally (see each connector's own docstring) and redeploying, not something the live service can do for itself.
+
+**Frontend (`frontend/vercel.json`)** — static `dist` output, `npm run build`. Set `RISKDESK_API_URL` to the Render backend's URL in Vercel's project settings (build-time — bakes the data snapshot into the static site) and set the backend's `ALLOWED_ORIGINS` to the Vercel site's URL once it has one (a real chicken-and-egg first deploy: deploy the backend first with `ALLOWED_ORIGINS` unset/`*`, deploy the frontend pointed at it, then tighten `ALLOWED_ORIGINS` to the real Vercel URL and redeploy the backend).

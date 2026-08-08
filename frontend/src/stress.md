@@ -4,7 +4,7 @@ title: Stress testing
 
 ```js
 import {money, warning} from "./components.js";
-const snapshot = FileAttachment("data/riskdesk.json").json();
+const snapshot = await FileAttachment("data/riskdesk.json").json();
 const historical = Object.entries(snapshot.historicalStress ?? {}).map(([scenario, value]) => ({scenario, ...(value.result ?? {})}));
 const hypothetical = Object.entries(snapshot.hypotheticalStress ?? {}).map(([scenario, value]) => ({scenario, ...value}));
 ```
@@ -13,7 +13,8 @@ const hypothetical = Object.entries(snapshot.hypotheticalStress ?? {}).map(([sce
 # Historical + hypothetical stress
 
 ```js
-display(warning(snapshot));
+const snapshotWarning = warning(snapshot);
+if (snapshotWarning) display(snapshotWarning);
 ```
 
 ## Historical replay

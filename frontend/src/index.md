@@ -4,7 +4,7 @@ title: Portfolio overview
 
 ```js
 import {card, money, warning} from "./components.js";
-const snapshot = FileAttachment("data/riskdesk.json").json();
+const snapshot = await FileAttachment("data/riskdesk.json").json();
 const exposure = snapshot.exposure ?? {};
 const portfolio = exposure.portfolio ?? {};
 const regime = snapshot.regime?.tercile?.current_regime ?? "unknown";
@@ -18,7 +18,8 @@ const credit = snapshot.credit?.cva ?? {};
 </div>
 
 ```js
-display(warning(snapshot));
+const snapshotWarning = warning(snapshot);
+if (snapshotWarning) display(snapshotWarning);
 display(html`<div class="section-grid">
   ${card("Gross exposure", money(portfolio.gross_market_value), `${portfolio.n_positions ?? 0} positions`)}
   ${card("Net exposure", money(portfolio.net_market_value))}
@@ -31,7 +32,7 @@ display(html`<div class="section-grid">
 
 ```js
 const strategyRows = Object.entries(exposure.by_strategy ?? {}).map(([strategy, value]) => ({strategy, gross: value.gross_market_value, net: value.net_market_value}));
-Plot.plot({height: 320, marginLeft: 130, x: {label: "Gross market value ($)", grid: true}, y: {label: null}, marks: [Plot.barX(strategyRows, {y: "strategy", x: "gross", fill: "#40d9c4", sort: {y: "-x"}}), Plot.ruleX([0])]})
+display(Plot.plot({height: 320, marginLeft: 130, x: {label: "Gross market value ($)", grid: true}, y: {label: null}, marks: [Plot.barX(strategyRows, {y: "strategy", x: "gross", fill: "#40d9c4", sort: {y: "-x"}}), Plot.ruleX([0])]}));
 ```
 
 <span class="risk-note">Snapshot generated ${snapshot.generatedAt ?? "—"}</span>

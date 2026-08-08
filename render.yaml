@@ -1,0 +1,60 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+#
+# Same pattern as alpha-signal-lab/render.yaml (this portfolio's own
+# established convention): single Python web service, no database of its
+# own (this backend reads from the sibling projects' already-deployed
+# Postgres instances and committed stand-in snapshots -- see
+# connectors/_env.py and README's Deployment section for exactly how).
+#
+# Every DATABASE_URL / API-key value below is `sync: false` -- entered
+# once in Render's dashboard, never committed here. A deployed instance
+# has no local filesystem access to the six sibling repos at all (no
+# "sibling checkout" exists on Render's servers), so every value that
+# connectors/_env.py would otherwise read from a sibling repo's own local
+# .env file has to be supplied directly as an env var here instead --
+# using the exact `{REPO_SLUG}_{KEY}` override convention
+# connectors/_env.py implements for precisely this reason.
+services:
+  - type: web
+    name: riskdesk-api
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+
+      - key: ALLOWED_ORIGINS
+        sync: false # set to your Vercel deployment URL(s), comma-separated, after the frontend is deployed
+
+      # alpha-signal-lab's own Postgres (Render-hosted) -- real live paper
+      # positions. Copy the exact DATABASE_URL from alpha-signal-lab's own
+      # Render service/render.yaml.
+      - key: ALPHA_SIGNAL_LAB_DATABASE_URL
+        sync: false
+
+      # streamalpha's own Postgres -- anomaly signals (no positions, this
+      # repo never contributes positions by design, see connectors/streamalpha.py).
+      - key: STREAMALPHA_DATABASE_URL
+        sync: false
+
+      # Alpaca paper-trading credentials, reused directly from
+      # alpha-signal-lab's own account (same pattern this whole portfolio
+      # already uses locally, see connectors/alpaca_market_data.py) --
+      # every risk-factor price/volume fetch across this project depends
+      # on these being set.
+      - key: APCA_API_KEY_ID
+        sync: false
+      - key: APCA_API_SECRET_KEY
+        sync: false
+
+      # bookmaker (local SQLite), execedge (local files), pairtrade-lab-1
+      # and voledge (both backtest-only) all have NO remotely-reachable
+      # live data source at all -- their connectors fall back to the
+      # committed stand-in snapshots under connectors/standins/ instead,
+      # which are already part of this repo and need no env vars. This is
+      # a real, disclosed limitation of the deployed instance (those
+      # snapshots are frozen at generation time), not a missing config
+      # value -- see README's Deployment section.
