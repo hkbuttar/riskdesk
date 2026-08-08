@@ -19,10 +19,11 @@ export function card(label, value, note = "", status = "") {
 }
 
 export function warning(snapshot) {
-  if (snapshot?.available) return null;
+  const failures = Object.entries(snapshot?.errors ?? {});
+  if (snapshot?.available && failures.length === 0) return null;
   const node = document.createElement("div");
   node.className = "data-warning";
-  node.textContent = snapshot?.error || "Backend snapshot unavailable. Start FastAPI and rebuild to populate this page.";
+  node.textContent = snapshot?.error || `Partial snapshot: ${failures.map(([name, error]) => `${name} (${error})`).join("; ")}`;
   return node;
 }
 

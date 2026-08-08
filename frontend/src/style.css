@@ -23,6 +23,11 @@ h2 { margin-top: 2rem; }
 .status-warn { color: var(--risk-amber); }
 .status-breach { color: var(--risk-red); }
 .data-warning { border-left: 3px solid var(--risk-amber); background: #211b10; padding: .8rem 1rem; color: #f4d59c; }
+.risk-header { display: flex; align-items: center; justify-content: space-between; width: 100%; font: 650 .72rem/1 ui-monospace, monospace; letter-spacing: .12em; }
+.api-connection { color: var(--risk-amber); font-size: .66rem; }
+.api-connection::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.api-connection[data-state="ok"] { color: var(--risk-cyan); }
+.api-connection[data-state="error"] { color: var(--risk-red); }
 .section-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
 table { font-variant-numeric: tabular-nums; }
 @media (max-width: 700px) { .risk-value { font-size: 1.3rem; } }

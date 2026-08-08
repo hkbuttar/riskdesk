@@ -162,6 +162,9 @@ def correlation_dcc_garch() -> dict:
     return to_jsonable({
         "a": result.a, "b": result.b, "notes": result.notes,
         "latest_correlation": result.latest_correlation(),
+        "tickers": result.tickers,
+        "dates": result.dates,
+        "correlation_history": result.R,
     })
 
 

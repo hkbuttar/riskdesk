@@ -96,6 +96,27 @@ def test_query_constraints_return_422_before_analytics_run():
     assert client.get("/api/attribution?window_days=0").status_code == 422
 
 
+def test_dcc_route_includes_time_history_for_frontend_slider(monkeypatch):
+    class Result:
+        a, b, notes = 0.03, 0.90, "test"
+        tickers = ["SPY", "BTC-USD"]
+        dates = pd.DatetimeIndex(["2026-08-06"])
+        R = [[[1.0, 0.4], [0.4, 1.0]]]
+
+        def latest_correlation(self):
+            return pd.DataFrame(self.R[0], index=self.tickers, columns=self.tickers)
+
+    returns = pd.DataFrame({"SPY": [0.01], "BTC-USD": [0.02]})
+    monkeypatch.setattr(api, "_risk_factor_setup", lambda: (_Valued([]), list(returns), returns, pd.Series([0.0]), {}))
+    monkeypatch.setattr(api, "fit_dcc_garch", lambda _: Result())
+
+    response = client.get("/api/correlation/dcc-garch")
+
+    assert response.status_code == 200
+    assert response.json()["dates"] == ["2026-08-06T00:00:00"]
+    assert response.json()["correlation_history"][0][0][1] == 0.4
+
+
 def test_cors_origins_are_trimmed():
     middleware = next(item for item in api.app.user_middleware if item.cls.__name__ == "CORSMiddleware")
     assert all(origin == origin.strip() for origin in middleware.kwargs["allow_origins"])

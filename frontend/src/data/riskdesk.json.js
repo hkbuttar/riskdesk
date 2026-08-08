@@ -15,9 +15,19 @@ async function load([name, path]) {
   return [name, await response.json()];
 }
 
-try {
-  const entries = await Promise.all(Object.entries(endpoints).map(load));
-  process.stdout.write(JSON.stringify({available: true, generatedAt: new Date().toISOString(), apiBase: base, ...Object.fromEntries(entries)}));
-} catch (error) {
-  process.stdout.write(JSON.stringify({available: false, generatedAt: new Date().toISOString(), apiBase: base, error: `RiskDesk API snapshot unavailable: ${error.message}`}));
-}
+const requested = Object.entries(endpoints);
+const settled = await Promise.allSettled(requested.map(load));
+const values = {};
+const errors = {};
+settled.forEach((result, index) => {
+  const name = requested[index][0];
+  if (result.status === "fulfilled") values[name] = result.value[1];
+  else errors[name] = result.reason?.message || String(result.reason);
+});
+const available = Object.keys(values).length > 0;
+process.stdout.write(JSON.stringify({
+  available, generatedAt: new Date().toISOString(), apiBase: base,
+  loaded: Object.keys(values), errors,
+  error: available ? null : "RiskDesk API unavailable; no snapshot endpoints could be loaded.",
+  ...values
+}));

@@ -675,9 +675,9 @@ Interactive documentation is available at `/docs`, the OpenAPI contract at `/ope
 The Observable Framework site implements all ten Step 21 views: portfolio overview, VaR comparison with regime control, static/DCC and regime-conditional correlation, factors/PCA, historical and hypothetical stress, interactive reverse stress, counterparty/CVA, EVT and liquidity, attribution, and the live risk monitor. Slow analytics are captured by a build-time FastAPI data loader; live monitoring and non-default reverse-stress targets use runtime requests. If the API is unavailable during a static build, the site builds with an explicit unavailable-data state rather than publishing fabricated values.
 
 ```bash
-cd frontend
-npm install
-npm run dev
+python scripts/dev.py
 ```
 
-Set `RISKDESK_API_URL` to the FastAPI origin. For production, set it to the Render backend URL in Vercel and set backend `ALLOWED_ORIGINS` to the Vercel site URL. `frontend/vercel.json` declares the static `dist` output; deployment itself is Step 22.
+This starts—or reuses—FastAPI at `http://127.0.0.1:8000`, waits for its health probe, and starts Observable at `http://127.0.0.1:3000` with the API URL and CORS origin connected. The site header reports `API CONNECTED`, `API DEGRADED`, or `API OFFLINE` using the real backend health endpoint.
+
+For production, set `RISKDESK_API_URL` to the Render backend URL in Vercel and set backend `ALLOWED_ORIGINS` to the Vercel site URL. `frontend/vercel.json` declares the static `dist` output; deployment itself is Step 22.

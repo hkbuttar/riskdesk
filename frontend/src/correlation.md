@@ -5,15 +5,31 @@ title: Correlation
 ```js
 import {matrixRows, warning} from "./components.js";
 const snapshot = FileAttachment("data/riskdesk.json").json();
-const model = view(Inputs.radio(["Static", "DCC-GARCH latest"], {label: "Estimator", value: "Static"}));
-const matrix = model === "Static" ? snapshot.staticCorrelation?.correlation : snapshot.dcc?.latest_correlation;
+const history = snapshot.dcc?.correlation_history ?? [];
+const dates = snapshot.dcc?.dates ?? [];
+const tickers = snapshot.dcc?.tickers ?? [];
+const lastIndex = Math.max(0, history.length - 1);
+const model = view(Inputs.radio(["Static", "DCC-GARCH through time"], {label: "Estimator", value: "Static"}));
+const timeIndex = view(Inputs.range([0, lastIndex], {label: "DCC date / stress-window slider", value: lastIndex, step: 1}));
+const historyMatrix = history[timeIndex]
+  ? Object.fromEntries(tickers.map((row, i) => [row, Object.fromEntries(tickers.map((column, j) => [column, history[timeIndex][i][j]]))]))
+  : snapshot.dcc?.latest_correlation;
+const matrix = model === "Static" ? snapshot.staticCorrelation?.correlation : historyMatrix;
 const cells = matrixRows(matrix);
+const selectedDate = dates[timeIndex]?.slice(0, 10) ?? "latest";
+const stressWindow = selectedDate >= "2020-02-19" && selectedDate <= "2020-03-23" ? "COVID crash"
+  : selectedDate >= "2022-01-03" && selectedDate <= "2022-10-12" ? "2022 rate-hike shock"
+  : selectedDate >= "2022-11-06" && selectedDate <= "2022-11-14" ? "FTX collapse" : "Outside named stress windows";
 ```
 
 <div class="eyebrow">Dependence structure</div>
 # Correlation
 
-Static history versus the latest time-varying DCC-GARCH estimate.
+Static history versus the time-varying DCC-GARCH estimate. Move the slider across the historical sample to inspect correlation during named stress windows.
+
+```js
+display(html`<div class="risk-card"><div class="risk-label">Selected DCC observation</div><div class="risk-value">${selectedDate}</div><div class="risk-note">${stressWindow}</div></div>`);
+```
 
 ```js
 display(warning(snapshot));

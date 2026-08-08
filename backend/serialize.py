@@ -38,6 +38,8 @@ def to_jsonable(obj):
         return obj.isoformat()
     if isinstance(obj, pd.Series):
         return {to_jsonable(k): to_jsonable(v) for k, v in obj.to_dict().items()}
+    if isinstance(obj, pd.Index):
+        return [to_jsonable(value) for value in obj.tolist()]
     if isinstance(obj, pd.DataFrame):
         return {
             to_jsonable(idx): {to_jsonable(col): to_jsonable(v) for col, v in row.items()}

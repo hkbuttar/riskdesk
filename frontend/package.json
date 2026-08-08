@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "observable preview",
-    "build": "observable build",
-    "clean": "observable clean"
+    "build": "observable build"
   },
   "dependencies": {
     "@observablehq/framework": "^1.13.4"

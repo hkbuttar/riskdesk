@@ -67,6 +67,11 @@ def test_pandas_series_converts_to_dict():
     assert to_jsonable(s) == {"a": 1.0, "b": 2.0}
 
 
+def test_pandas_index_converts_to_list():
+    index = pd.DatetimeIndex(["2026-08-06", "2026-08-07"])
+    assert to_jsonable(index) == ["2026-08-06T00:00:00", "2026-08-07T00:00:00"]
+
+
 def test_pandas_dataframe_converts_to_nested_dict():
     df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r1", "r2"])
     result = to_jsonable(df)
