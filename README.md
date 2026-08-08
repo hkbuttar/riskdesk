@@ -1,9 +1,11 @@
 # RiskDesk — Portfolio Risk & Stress-Testing Capstone
 Portfolio risk aggregation across six strategies. VaR/CVaR, DCC-GARCH correlation, factor decomposition, regime-conditional models, historical + reverse stress testing, EVT tail risk, counterparty credit risk, and live monitoring. Observable Framework dashboard. The capstone risk layer.
 
+**Live demo:** [riskdesk-eight.vercel.app](https://riskdesk-eight.vercel.app/)
+
 ## Status
 
-**Steps 1–21 are implemented** — the full risk-analytics layer, tested FastAPI backend, and Observable Framework frontend. Deployment configuration (`render.yaml`, `frontend/vercel.json`) is written and verified locally (see the Deployment section below — the deployed-instance data pipeline was actually run end-to-end with zero local filesystem access, not just configured); an actual Render/Vercel deploy hasn't been triggered yet.
+**Steps 1–21 are implemented** — the full risk-analytics layer, tested FastAPI backend, and Observable Framework frontend. Deployed: frontend on Vercel, backend on Render (see the Deployment section below for the exact setup, including the disclosed limitations of the deployed instance's data pipeline).
 
 **`notebooks/research.ipynb`** is an interactive companion covering the same key findings below — every cell calls this project's real modules against real, live-fetched data (no separate, simplified reimplementation), and is executed end-to-end (`jupyter nbconvert --execute`) so its saved outputs are genuine current results, not placeholder code. Re-running it will regenerate fresh numbers, since the underlying data (live positions, current prices, current regime) changes day to day.
 
